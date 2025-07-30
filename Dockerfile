@@ -22,6 +22,7 @@ copy scripts scripts
 # UDP and TCP
 expose 53
 
-user nobody:nogroup
+# Note: Container runs as root due to NET_ADMIN capability requirement
+# Security is enforced through docker-compose.yml security options
 
 entrypoint ["/dfirewall"]

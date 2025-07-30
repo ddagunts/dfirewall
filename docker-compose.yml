@@ -1,6 +1,6 @@
 services:
   redis:
-    image: redis:latest
+    image: redis:7.2-alpine
     container_name: redis
     restart: "always"
     healthcheck:
@@ -21,6 +21,15 @@ services:
     network_mode: host
     cap_add:
       - NET_ADMIN
+    # Security hardening
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=100M,mode=1777
+      - /dev/shm:rw,size=100M,mode=1777
+    security_opt:
+      - no-new-privileges:true
     environment:
       #- "PORT=53"
       - "UPSTREAM=1.1.1.1:53"
@@ -31,4 +40,5 @@ services:
       - "INVOKE_ALWAYS=1"
     hostname: "dfirewall"
     image: "dfirewall:latest"
+    # Use root for NET_ADMIN capability but with security hardening
     user: root
