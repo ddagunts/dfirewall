@@ -23,6 +23,7 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 - IP and domain blacklisting with Redis and file-based support
 - IP and domain reputation checking with multiple threat intelligence providers (VirusTotal, AbuseIPDB, URLVoid, custom APIs)
 - AI-powered threat detection with domain analysis, traffic anomaly detection, and proactive threat hunting (OpenAI, Claude, local models) :D
+- Custom script integration for user-provided pass/fail validation with unified/separate scripts, caching, and retry logic
 - Redis key expiration monitoring with cleanup scripts (enables non-Linux/non-ipset support)
 - Web-based UI for viewing and managing firewall rules
 - Support for both UDP and TCP DNS protocols
@@ -63,6 +64,7 @@ Optional:
 - `BLACKLIST_CONFIG`: Path to JSON configuration file for IP/domain blacklisting
 - `REPUTATION_CONFIG`: Path to JSON configuration file for IP/domain reputation checking
 - `AI_CONFIG`: Path to JSON configuration file for AI-powered threat detection :D
+- `CUSTOM_SCRIPT_CONFIG`: Path to JSON configuration file for user-provided pass/fail scripts
 - `WEB_UI_PORT`: Port for web-based rule management interface (1024-65535)
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
 - `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support

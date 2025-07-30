@@ -179,6 +179,47 @@ var aiConfig *AIConfig
 var aiAnalysisCache map[string]*AIAnalysisResult
 var trafficPatterns map[string]*AITrafficPattern
 
+// Custom Script Integration Data Structures
+
+// CustomScriptConfig represents configuration for user-provided pass/fail scripts
+type CustomScriptConfig struct {
+	// QUESTION: Should we support different scripts for domains vs IPs?
+	// ASSUMPTION: Start with unified script that handles both, can extend later
+	Enabled         bool   `json:"enabled"`           // Global enable/disable for custom scripts
+	DomainScript    string `json:"domain_script"`     // Path to script for domain validation
+	IPScript        string `json:"ip_script"`         // Path to script for IP validation
+	UnifiedScript   string `json:"unified_script"`    // Path to unified script for both (takes precedence)
+	
+	// Execution settings
+	Timeout         int    `json:"timeout"`           // Script execution timeout in seconds
+	RetryCount      int    `json:"retry_count"`       // Number of retries on script failure
+	CacheResults    bool   `json:"cache_results"`     // Whether to cache script results
+	CacheTTL        int    `json:"cache_ttl"`         // Cache TTL in seconds
+	
+	// Error handling
+	FailureMode     string `json:"failure_mode"`      // "allow" or "block" on script failure/timeout
+	LogDecisions    bool   `json:"log_decisions"`     // Whether to log all script decisions
+	LogFailures     bool   `json:"log_failures"`      // Whether to log script failures
+}
+
+// CustomScriptResult represents the result of a custom script execution
+type CustomScriptResult struct {
+	Target       string    `json:"target"`         // Domain or IP that was checked
+	Type         string    `json:"type"`           // "domain" or "ip"
+	Decision     string    `json:"decision"`       // "allow" or "block"
+	ExitCode     int       `json:"exit_code"`      // Script exit code
+	Output       string    `json:"output"`         // Script stdout output
+	ErrorOutput  string    `json:"error_output"`   // Script stderr output
+	ExecutionTime float64  `json:"execution_time"` // Execution time in seconds
+	Timestamp    time.Time `json:"timestamp"`      // When the script was executed
+	Cached       bool      `json:"cached"`         // Whether result came from cache
+	ScriptPath   string    `json:"script_path"`    // Path to script that was executed
+}
+
+// Global variables for custom script integration
+var customScriptConfig *CustomScriptConfig
+var customScriptCache map[string]*CustomScriptResult
+
 // BlacklistConfig represents blacklist configuration
 type BlacklistConfig struct {
 	// Redis-based blacklists
@@ -556,6 +597,334 @@ func loadAIConfiguration(configPath string) (*AIConfig, error) {
 	log.Printf("Loaded AI configuration: provider=%s, model=%s, features=[domain_analysis=%v, traffic_anomaly=%v, threat_hunting=%v, adaptive_blocking=%v]",
 		config.Provider, config.Model, config.DomainAnalysis, config.TrafficAnomaly, config.ThreatHunting, config.AdaptiveBlocking)
 	return &config, nil
+}
+
+// Custom Script Configuration Loading and Management
+
+// loadCustomScriptConfiguration loads custom script configuration from JSON file
+func loadCustomScriptConfiguration(configPath string) (*CustomScriptConfig, error) {
+	// ASSUMPTION: Configuration file must exist and be readable
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("custom script configuration file does not exist: %s", configPath)
+	}
+
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read custom script configuration file: %w", err)
+	}
+
+	var config CustomScriptConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse custom script configuration JSON: %w", err)
+	}
+
+	// ASSUMPTION: Validate configuration and set defaults
+	if config.Enabled {
+		// Check if at least one script is specified
+		hasScript := config.UnifiedScript != "" || config.DomainScript != "" || config.IPScript != ""
+		if !hasScript {
+			return nil, fmt.Errorf("at least one script path must be specified when custom scripts are enabled")
+		}
+		
+		// Validate script files exist and are executable
+		if config.UnifiedScript != "" {
+			if err := validateScriptPath(config.UnifiedScript); err != nil {
+				return nil, fmt.Errorf("unified_script validation failed: %w", err)
+			}
+		}
+		if config.DomainScript != "" {
+			if err := validateScriptPath(config.DomainScript); err != nil {
+				return nil, fmt.Errorf("domain_script validation failed: %w", err)
+			}
+		}
+		if config.IPScript != "" {
+			if err := validateScriptPath(config.IPScript); err != nil {
+				return nil, fmt.Errorf("ip_script validation failed: %w", err)
+			}
+		}
+		
+		// Set defaults for unspecified values
+		if config.Timeout == 0 {
+			config.Timeout = 10 // 10 seconds default timeout
+		}
+		if config.RetryCount == 0 {
+			config.RetryCount = 1 // No retries by default
+		}
+		if config.CacheTTL == 0 {
+			config.CacheTTL = 300 // 5 minutes cache TTL
+		}
+		if config.FailureMode == "" {
+			config.FailureMode = "allow" // Allow by default on script failure (fail-open)
+		}
+		
+		// ASSUMPTION: Validate failure mode
+		if config.FailureMode != "allow" && config.FailureMode != "block" {
+			return nil, fmt.Errorf("failure_mode must be 'allow' or 'block', got: %s", config.FailureMode)
+		}
+		
+		// ASSUMPTION: Reasonable timeout limits (1 second to 5 minutes)
+		if config.Timeout < 1 || config.Timeout > 300 {
+			return nil, fmt.Errorf("timeout must be between 1 and 300 seconds, got: %d", config.Timeout)
+		}
+		
+		// ASSUMPTION: Reasonable retry limits (0 to 5 retries)
+		if config.RetryCount < 0 || config.RetryCount > 5 {
+			return nil, fmt.Errorf("retry_count must be between 0 and 5, got: %d", config.RetryCount)
+		}
+	}
+
+	log.Printf("Loaded custom script configuration: enabled=%v, unified=%s, domain=%s, ip=%s, timeout=%ds, failure_mode=%s",
+		config.Enabled, config.UnifiedScript, config.DomainScript, config.IPScript, config.Timeout, config.FailureMode)
+	return &config, nil
+}
+
+// validateScriptPath validates that a script path exists and is executable
+func validateScriptPath(scriptPath string) error {
+	// ASSUMPTION: Check if file exists
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		return fmt.Errorf("script file does not exist: %s", scriptPath)
+	}
+	
+	// ASSUMPTION: Check if it's a regular file (not directory)
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("script path is not a regular file: %s", scriptPath)
+	}
+	
+	// ASSUMPTION: Check if file is executable (Unix permissions)
+	if info.Mode().Perm()&0111 == 0 {
+		return fmt.Errorf("script file is not executable: %s (permissions: %o)", scriptPath, info.Mode().Perm())
+	}
+	
+	return nil
+}
+
+// initializeCustomScriptSystem initializes the custom script validation system
+func initializeCustomScriptSystem() {
+	// ASSUMPTION: Initialize global variables and caches
+	if customScriptCache == nil {
+		customScriptCache = make(map[string]*CustomScriptResult)
+	}
+	
+	if customScriptConfig != nil && customScriptConfig.Enabled {
+		log.Printf("Custom script system initialized")
+		if customScriptConfig.UnifiedScript != "" {
+			log.Printf("Using unified script: %s", customScriptConfig.UnifiedScript)
+		} else {
+			log.Printf("Using separate scripts - domain: %s, ip: %s", customScriptConfig.DomainScript, customScriptConfig.IPScript)
+		}
+		log.Printf("Script settings: timeout=%ds, retries=%d, cache=%v, failure_mode=%s",
+			customScriptConfig.Timeout, customScriptConfig.RetryCount, customScriptConfig.CacheResults, customScriptConfig.FailureMode)
+	}
+}
+
+// Custom Script Execution Functions
+
+// executeCustomScript executes user-provided script for domain/IP validation
+func executeCustomScript(target, targetType string) *CustomScriptResult {
+	if customScriptConfig == nil || !customScriptConfig.Enabled {
+		// Return allow result when custom scripts are disabled
+		return &CustomScriptResult{
+			Target:       target,
+			Type:         targetType,
+			Decision:     "allow",
+			ExitCode:     0,
+			Output:       "custom scripts disabled",
+			ExecutionTime: 0,
+			Timestamp:    time.Now(),
+			Cached:       false,
+			ScriptPath:   "disabled",
+		}
+	}
+
+	// ASSUMPTION: Check cache first if caching is enabled
+	cacheKey := fmt.Sprintf("custom:%s:%s", targetType, target)
+	if customScriptConfig.CacheResults {
+		if cached, exists := customScriptCache[cacheKey]; exists {
+			// ASSUMPTION: Use configured cache TTL
+			if time.Since(cached.Timestamp) < time.Duration(customScriptConfig.CacheTTL)*time.Second {
+				cached.Cached = true
+				return cached
+			}
+			// Cache expired, remove it
+			delete(customScriptCache, cacheKey)
+		}
+	}
+
+	// ASSUMPTION: Determine which script to use based on target type and configuration
+	var scriptPath string
+	if customScriptConfig.UnifiedScript != "" {
+		// Unified script takes precedence
+		scriptPath = customScriptConfig.UnifiedScript
+	} else if targetType == "domain" && customScriptConfig.DomainScript != "" {
+		scriptPath = customScriptConfig.DomainScript
+	} else if targetType == "ip" && customScriptConfig.IPScript != "" {
+		scriptPath = customScriptConfig.IPScript
+	} else {
+		// No appropriate script configured for this target type
+		return &CustomScriptResult{
+			Target:       target,
+			Type:         targetType,
+			Decision:     customScriptConfig.FailureMode,
+			ExitCode:     -1,
+			Output:       "",
+			ErrorOutput:  fmt.Sprintf("no script configured for target type: %s", targetType),
+			ExecutionTime: 0,
+			Timestamp:    time.Now(),
+			Cached:       false,
+			ScriptPath:   "none",
+		}
+	}
+
+	// Execute script with retry logic
+	var result *CustomScriptResult
+	for attempt := 0; attempt <= customScriptConfig.RetryCount; attempt++ {
+		if attempt > 0 {
+			log.Printf("Custom script retry %d/%d for %s (%s)", attempt, customScriptConfig.RetryCount, target, targetType)
+		}
+		
+		result = executeScriptAttempt(scriptPath, target, targetType)
+		
+		// ASSUMPTION: Retry only on execution errors (exit code -1), not on script decision (exit codes 0-255)
+		if result.ExitCode != -1 {
+			break // Script executed successfully (whether it returned allow or block)
+		}
+		
+		// QUESTION: Should we add exponential backoff between retries?
+		// ASSUMPTION: Simple immediate retry for now
+		if attempt < customScriptConfig.RetryCount {
+			time.Sleep(100 * time.Millisecond) // Brief pause between retries
+		}
+	}
+
+	// Cache successful results if configured
+	if customScriptConfig.CacheResults && result.ExitCode != -1 {
+		customScriptCache[cacheKey] = result
+	}
+
+	// Log decisions if configured
+	if customScriptConfig.LogDecisions {
+		log.Printf("CUSTOM SCRIPT %s: %s (%s) -> %s (exit_code: %d, execution_time: %.3fs, script: %s)",
+			strings.ToUpper(result.Decision), target, targetType, result.Decision, result.ExitCode, result.ExecutionTime, scriptPath)
+	}
+
+	// Log failures if configured and execution failed
+	if customScriptConfig.LogFailures && result.ExitCode == -1 {
+		log.Printf("CUSTOM SCRIPT ERROR: Failed to execute script for %s (%s): %s", target, targetType, result.ErrorOutput)
+	}
+
+	return result
+}
+
+// executeScriptAttempt performs a single script execution attempt
+func executeScriptAttempt(scriptPath, target, targetType string) *CustomScriptResult {
+	startTime := time.Now()
+	
+	// ASSUMPTION: Pass target and type as command line arguments
+	// Script should handle: script.sh <target> <type>
+	// where <target> is the domain/IP and <type> is "domain" or "ip"
+	cmd := exec.Command(scriptPath, target, targetType)
+	
+	// ASSUMPTION: Set environment variables for additional context
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("DFIREWALL_TARGET=%s", target),
+		fmt.Sprintf("DFIREWALL_TYPE=%s", targetType),
+		fmt.Sprintf("DFIREWALL_TIMESTAMP=%d", time.Now().Unix()),
+	)
+	
+	// ASSUMPTION: Capture both stdout and stderr
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	
+	// ASSUMPTION: Set timeout to prevent hanging scripts
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(customScriptConfig.Timeout)*time.Second)
+	defer cancel()
+	
+	// Run the command with timeout
+	err := cmd.Start()
+	if err != nil {
+		return &CustomScriptResult{
+			Target:       target,
+			Type:         targetType,
+			Decision:     customScriptConfig.FailureMode,
+			ExitCode:     -1,
+			Output:       "",
+			ErrorOutput:  fmt.Sprintf("failed to start script: %v", err),
+			ExecutionTime: time.Since(startTime).Seconds(),
+			Timestamp:    time.Now(),
+			Cached:       false,
+			ScriptPath:   scriptPath,
+		}
+	}
+	
+	// Wait for command completion or timeout
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	
+	select {
+	case err := <-done:
+		executionTime := time.Since(startTime).Seconds()
+		
+		// ASSUMPTION: Parse exit code to determine decision
+		exitCode := 0
+		decision := "allow"
+		
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+				// ASSUMPTION: Exit code 0 = allow, any non-zero = block
+				if exitCode != 0 {
+					decision = "block"
+				}
+			} else {
+				// Other execution error
+				return &CustomScriptResult{
+					Target:       target,
+					Type:         targetType,
+					Decision:     customScriptConfig.FailureMode,
+					ExitCode:     -1,
+					Output:       stdout.String(),
+					ErrorOutput:  fmt.Sprintf("script execution error: %v", err),
+					ExecutionTime: executionTime,
+					Timestamp:    time.Now(),
+					Cached:       false,
+					ScriptPath:   scriptPath,
+				}
+			}
+		}
+		
+		return &CustomScriptResult{
+			Target:       target,
+			Type:         targetType,
+			Decision:     decision,
+			ExitCode:     exitCode,
+			Output:       stdout.String(),
+			ErrorOutput:  stderr.String(),
+			ExecutionTime: executionTime,
+			Timestamp:    time.Now(),
+			Cached:       false,
+			ScriptPath:   scriptPath,
+		}
+		
+	case <-ctx.Done():
+		// Timeout occurred, kill the process
+		cmd.Process.Kill()
+		return &CustomScriptResult{
+			Target:       target,
+			Type:         targetType,
+			Decision:     customScriptConfig.FailureMode,
+			ExitCode:     -1,
+			Output:       stdout.String(),
+			ErrorOutput:  fmt.Sprintf("script execution timeout after %d seconds", customScriptConfig.Timeout),
+			ExecutionTime: time.Duration(customScriptConfig.Timeout).Seconds(),
+			Timestamp:    time.Now(),
+			Cached:       false,
+			ScriptPath:   scriptPath,
+		}
+	}
 }
 
 // initializeAISystem initializes the AI analysis system
@@ -2229,6 +2598,23 @@ func Register(rt Route) error {
 		log.Printf("AI_CONFIG env var not set, AI features disabled")
 	}
 
+	// CUSTOM_SCRIPT_CONFIG: JSON configuration file for user-provided pass/fail scripts
+	customScriptConfigPath := os.Getenv("CUSTOM_SCRIPT_CONFIG")
+	if customScriptConfigPath != "" {
+		config, err := loadCustomScriptConfiguration(customScriptConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load custom script configuration: %v", err)
+		}
+		customScriptConfig = config
+		
+		// Initialize custom script system
+		initializeCustomScriptSystem()
+		
+		log.Printf("CUSTOM_SCRIPT_CONFIG loaded from %s: enabled=%v", customScriptConfigPath, customScriptConfig.Enabled)
+	} else {
+		log.Printf("CUSTOM_SCRIPT_CONFIG env var not set, custom script validation disabled")
+	}
+
 	opt, err := redis.ParseURL(redisEnv)
 	if err != nil {
 		panic(err)
@@ -2415,6 +2801,25 @@ func Register(rt Route) error {
 						requestedDomain, aiResult.ThreatScore, aiResult.Confidence)
 				}
 			}
+			
+			// FEATURE: Custom script domain validation
+			if customScriptConfig != nil && customScriptConfig.Enabled {
+				scriptResult := executeCustomScript(requestedDomain, "domain")
+				if scriptResult.Decision == "block" {
+					log.Printf("CUSTOM SCRIPT BLOCK: Domain %s requested by %s blocked by custom script (exit_code: %d, execution_time: %.3fs, output: %s)", 
+						requestedDomain, from, scriptResult.ExitCode, scriptResult.ExecutionTime, scriptResult.Output)
+					
+					// ASSUMPTION: Block custom script flagged domains by returning NXDOMAIN
+					m := new(dns.Msg)
+					m.SetReply(r)
+					m.SetRcode(r, dns.RcodeNameError) // NXDOMAIN
+					w.WriteMsg(m)
+					return
+				} else if os.Getenv("DEBUG") != "" {
+					log.Printf("CUSTOM SCRIPT OK: Domain %s allowed by custom script (exit_code: %d, execution_time: %.3fs)", 
+						requestedDomain, scriptResult.ExitCode, scriptResult.ExecutionTime)
+				}
+			}
 		}
 
 		//dnsClient := &dns.Client{Net: "udp"}
@@ -2552,6 +2957,21 @@ func Register(rt Route) error {
 					} else if os.Getenv("DEBUG") != "" {
 						log.Printf("REPUTATION OK: IP %s clean (score: %.2f, provider: %s)", 
 							currentIP.String(), reputationResult.Score, reputationResult.Provider)
+					}
+				}
+				
+				// FEATURE: Custom script IP validation
+				if customScriptConfig != nil && customScriptConfig.Enabled {
+					scriptResult := executeCustomScript(currentIP.String(), "ip")
+					if scriptResult.Decision == "block" {
+						log.Printf("CUSTOM SCRIPT BLOCK: IP %s resolved for domain %s blocked by custom script (exit_code: %d, execution_time: %.3fs, output: %s)", 
+							currentIP.String(), r.Question[0].Name, scriptResult.ExitCode, scriptResult.ExecutionTime, scriptResult.Output)
+						// ASSUMPTION: Skip this record by continuing to next iteration
+						// This effectively removes the blocked IP from the response
+						continue
+					} else if os.Getenv("DEBUG") != "" {
+						log.Printf("CUSTOM SCRIPT OK: IP %s allowed by custom script (exit_code: %d, execution_time: %.3fs)", 
+							currentIP.String(), scriptResult.ExitCode, scriptResult.ExecutionTime)
 					}
 				}
 				

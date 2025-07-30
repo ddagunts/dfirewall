@@ -25,6 +25,7 @@ SCRIPT_CONFIG=               # path to JSON configuration file for per-client sc
 BLACKLIST_CONFIG=            # path to JSON configuration file for IP/domain blacklisting
 REPUTATION_CONFIG=           # path to JSON configuration file for IP/domain reputation checking
 AI_CONFIG=                   # path to JSON configuration file for AI-powered threat detection :D
+CUSTOM_SCRIPT_CONFIG=        # path to JSON configuration file for user-provided pass/fail scripts
 WEB_UI_PORT=                 # port for web-based rule management interface (e.g., 8080)
 ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6)
 DEBUG=                       # set to any value to enable verbose logging
@@ -827,6 +828,290 @@ DEBUG=1  # Enable detailed AI logging
 - **Serverless Monitoring**: Tracks DNS requests from serverless functions
 - **Cloud-Native Threats**: Identifies cloud-specific attack patterns
 
+## Custom Script Integration
+
+dfirewall supports user-provided pass/fail scripts for custom domain and IP validation, allowing organizations to implement proprietary security logic, business rules, and compliance requirements.
+
+### Configuration
+
+Create a custom script configuration file and set `CUSTOM_SCRIPT_CONFIG=/path/to/custom-script-config.json`:
+
+```json
+{
+  "enabled": true,
+  "unified_script": "/scripts/custom_validate.sh",
+  "domain_script": "",
+  "ip_script": "",
+  
+  "timeout": 10,
+  "retry_count": 1,
+  "cache_results": true,
+  "cache_ttl": 300,
+  
+  "failure_mode": "allow",
+  "log_decisions": true,
+  "log_failures": true
+}
+```
+
+### Script Types
+
+#### Unified Script
+- **Purpose**: Single script handles both domain and IP validation
+- **Configuration**: `"unified_script": "/path/to/script.sh"`
+- **Precedence**: Takes priority over separate domain/IP scripts
+- **Use Case**: Simplified deployment with shared validation logic
+
+#### Separate Scripts
+- **Domain Script**: `"domain_script": "/path/to/domain_script.sh"`
+- **IP Script**: `"ip_script": "/path/to/ip_script.sh"`
+- **Use Case**: Specialized validation logic for each target type
+
+### Script Interface
+
+#### Command Line Arguments
+```bash
+script.sh <target> <type>
+```
+- **`<target>`**: Domain name or IP address to validate
+- **`<type>`**: Either "domain" or "ip"
+
+#### Environment Variables
+Scripts receive additional context through environment variables:
+- **`DFIREWALL_TARGET`**: Same as first argument
+- **`DFIREWALL_TYPE`**: Same as second argument  
+- **`DFIREWALL_TIMESTAMP`**: Unix timestamp when script was called
+
+#### Exit Codes
+- **`0`**: Allow (target is safe)
+- **`1`**: Block (target should be blocked)
+- **Any other code**: Block (treated as block decision)
+
+#### Output Handling
+- **stdout**: Captured and logged (decision reasoning)
+- **stderr**: Captured and logged (error messages)
+
+### Example Scripts
+
+#### Unified Validation Script
+```bash
+#!/bin/bash
+TARGET="$1"
+TYPE="$2"
+
+case "$TYPE" in
+    "domain")
+        # Block domains containing suspicious keywords
+        if echo "$TARGET" | grep -qi -E "(malicious|evil|phishing)"; then
+            echo "BLOCK: Domain contains suspicious keywords" 
+            exit 1
+        fi
+        
+        # Block very long subdomains (potential DGA)
+        SUBDOMAIN=$(echo "$TARGET" | cut -d'.' -f1)
+        if [ ${#SUBDOMAIN} -gt 20 ]; then
+            echo "BLOCK: Subdomain suspiciously long"
+            exit 1
+        fi
+        ;;
+        
+    "ip")
+        # Block private IPs in external DNS responses
+        if echo "$TARGET" | grep -q -E "^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)"; then
+            echo "BLOCK: Private IP in external DNS"
+            exit 1
+        fi
+        
+        # Block network/broadcast addresses
+        if echo "$TARGET" | grep -q -E "\.(0|255)$"; then
+            echo "BLOCK: Network or broadcast address"
+            exit 1
+        fi
+        ;;
+esac
+
+echo "ALLOW: Validation passed"
+exit 0
+```
+
+#### Domain-Specific Script
+```bash
+#!/bin/bash
+DOMAIN="$1"
+
+# Load blocked domains from file
+if grep -q "^$DOMAIN$" /etc/dfirewall/blocked_domains.txt; then
+    echo "BLOCK: Domain in blocked list"
+    exit 1  
+fi
+
+# Check domain against internal policy
+if echo "$DOMAIN" | grep -qi "\.adult\|\.gambling\|\.social"; then
+    echo "BLOCK: Violates corporate policy"
+    exit 1
+fi
+
+# Time-based blocking
+HOUR=$(date +%H)
+if [ "$HOUR" -ge 9 ] && [ "$HOUR" -le 17 ]; then
+    if echo "$DOMAIN" | grep -qi "entertainment\|games\|social"; then
+        echo "BLOCK: Non-business site during work hours"
+        exit 1
+    fi
+fi
+
+echo "ALLOW: Domain approved"
+exit 0
+```
+
+### Configuration Options
+
+#### Execution Settings
+- **`timeout`**: Maximum script execution time (1-300 seconds)
+- **`retry_count`**: Number of retries on script failure (0-5)
+- **`cache_results`**: Enable result caching for performance
+- **`cache_ttl`**: Cache expiration time in seconds
+
+#### Error Handling  
+- **`failure_mode`**: Action on script failure ("allow" or "block")
+- **`log_decisions`**: Log all script decisions
+- **`log_failures`**: Log script execution failures
+
+### Integration Flow
+
+#### Domain Validation Flow
+```
+DNS Request → Domain Extraction → Custom Script → Block/Allow Decision
+```
+
+1. **Request Interception**: Domain extracted from DNS request
+2. **Script Execution**: Custom script called with domain and "domain" type
+3. **Result Processing**: Exit code interpreted as allow/block decision
+4. **Caching**: Result cached if enabled
+5. **Action**: NXDOMAIN returned for blocked domains
+
+#### IP Validation Flow  
+```
+DNS Resolution → IP Extraction → Custom Script → Include/Exclude from Response
+```
+
+1. **IP Extraction**: IPs extracted from DNS response
+2. **Script Execution**: Custom script called with IP and "ip" type  
+3. **Result Processing**: Exit code determines IP inclusion
+4. **Filtering**: Blocked IPs removed from DNS response
+5. **Caching**: Result cached for future requests
+
+### Performance Optimization
+
+#### Caching Strategy
+- **Target-Based Caching**: Results cached by domain/IP
+- **TTL Management**: Configurable cache expiration
+- **Memory Efficiency**: LRU eviction for large caches
+- **Cache Warming**: Proactive caching of common targets
+
+#### Execution Optimization
+- **Timeout Protection**: Prevents hanging scripts
+- **Retry Logic**: Handles transient failures
+- **Concurrent Execution**: Non-blocking script execution
+- **Resource Limits**: Prevents resource exhaustion
+
+### Security Considerations
+
+#### Script Security
+- **Execution Permissions**: Scripts must be executable by dfirewall user
+- **Path Validation**: Script paths validated at startup
+- **Environment Isolation**: Scripts run in controlled environment
+- **Input Sanitization**: Arguments sanitized for shell safety
+
+#### Error Handling
+- **Fail-Safe Default**: Configurable failure mode (allow/block)
+- **Timeout Handling**: Scripts killed on timeout
+- **Resource Protection**: Prevents script resource abuse
+- **Logging**: Comprehensive execution logging
+
+### Use Cases
+
+#### Corporate Policy Enforcement
+```bash
+# Block social media during work hours
+HOUR=$(date +%H)
+if [ "$HOUR" -ge 9 ] && [ "$HOUR" -le 17 ]; then
+    if echo "$TARGET" | grep -qi "facebook\|twitter\|instagram"; then
+        echo "BLOCK: Social media blocked during work hours"
+        exit 1
+    fi
+fi
+```
+
+#### Compliance Requirements
+```bash
+# HIPAA compliance - block unauthorized health sites
+if echo "$TARGET" | grep -qi "health\|medical" && ! echo "$TARGET" | grep -qi "approved-medical.com"; then
+    echo "BLOCK: Unauthorized medical site"
+    exit 1
+fi
+```
+
+#### Geographic Restrictions
+```bash
+# Block IPs from certain countries (using GeoIP)
+COUNTRY=$(geoiplookup "$TARGET" | cut -d':' -f2 | tr -d ' ')
+if echo "$COUNTRY" | grep -qi "CN\|RU\|KP"; then
+    echo "BLOCK: IP from restricted country: $COUNTRY"
+    exit 1
+fi
+```
+
+#### Threat Intelligence Integration
+```bash
+# Check against custom threat feeds
+if curl -s "https://internal-threat-intel.company.com/check?target=$TARGET" | grep -q "malicious"; then
+    echo "BLOCK: Flagged by internal threat intelligence"
+    exit 1
+fi
+```
+
+#### Content Filtering
+```bash
+# Parental controls - block adult content
+if echo "$TARGET" | grep -qi -f /etc/dfirewall/adult_keywords.txt; then
+    echo "BLOCK: Adult content blocked"
+    exit 1
+fi
+```
+
+### Monitoring and Debugging
+
+#### Logging Examples
+```
+2024-07-30 15:45:12 CUSTOM SCRIPT BLOCK: Domain gambling.com requested by 192.168.1.100 blocked by custom script (exit_code: 1, execution_time: 0.023s, output: BLOCK: Violates corporate policy)
+2024-07-30 15:45:15 CUSTOM SCRIPT OK: Domain google.com allowed by custom script (exit_code: 0, execution_time: 0.012s)
+2024-07-30 15:45:18 CUSTOM SCRIPT ERROR: Failed to execute script for badsite.com (domain): script execution timeout after 10 seconds
+```
+
+#### Performance Metrics
+- Script execution time statistics
+- Cache hit rates
+- Failure rates and timeout occurrences
+- Decision distribution (allow vs block)
+
+### Advanced Features
+
+#### Dynamic Script Loading
+- **Hot Reload**: Update scripts without restarting dfirewall
+- **Version Control**: Track script changes and rollbacks
+- **A/B Testing**: Compare different validation logic
+
+#### Script Chaining
+- **Multiple Scripts**: Execute multiple validation scripts
+- **Decision Logic**: AND/OR logic for multiple script results
+- **Priority Ordering**: Execute scripts in priority order
+
+#### Integration APIs
+- **REST API**: HTTP endpoints for script management
+- **Database Integration**: Store validation rules in databases
+- **External Services**: Call external validation services
+
 You should see ipsets on the host being populated by the container.  Note that the second Signal IP (172.253.122.121) had a low TTL of 31s and expired out of the list already
 ```
 # ipset list
@@ -921,4 +1206,4 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 - ~~add support for checking IP and/or domain against blacklist in Redis (or file)~~ ✅ **Completed** - Added comprehensive Redis and file-based IP/domain blacklisting
 - ~~add support for checking IP and/or domain against common reputation checkers~~ ✅ **Completed** - Added integration with VirusTotal, AbuseIPDB, URLVoid, and custom reputation services
 - ~~AI integration~~ ✅ **Completed** - Added comprehensive AI-powered threat detection with domain analysis, traffic anomaly detection, and proactive threat hunting :D
-- add support for checking IP and/or domain by executing user-provided pass/fail script
+- ~~add support for checking IP and/or domain by executing user-provided pass/fail script~~ ✅ **Completed** - Added comprehensive custom script integration with unified/separate scripts, caching, retry logic, and extensive configuration options

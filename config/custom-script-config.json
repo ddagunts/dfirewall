@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "unified_script": "/scripts/custom_validate.sh",
+  "domain_script": "",
+  "ip_script": "",
+  
+  "timeout": 10,
+  "retry_count": 1,
+  "cache_results": true,
+  "cache_ttl": 300,
+  
+  "failure_mode": "allow",
+  "log_decisions": true,
+  "log_failures": true
+}
