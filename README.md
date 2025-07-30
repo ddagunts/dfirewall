@@ -58,12 +58,17 @@ iface ens9.31 inet static
 Restarting networking (via systemctl): networking.service.
 ```
 
-2) Enable IP forwarding and disable IPv6 (for now, IPv6 support is ToDo)
+2) Enable IP forwarding and optionally disable IPv6 (IPv6 is now supported via AAAA records)
 ```
-# echo "net.ipv4.ip_forward=1"                >  /etc/sysctl.d/router.conf
+# Enable IP forwarding (required)
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/router.conf
+
+# Optionally disable IPv6 if not needed (dfirewall now supports IPv6 via AAAA records)  
 # echo "net.ipv6.conf.all.disable_ipv6=1"     >  /etc/sysctl.d/ipv6_disable.conf
 # echo "net.ipv6.conf.default.disable_ipv6=1" >> /etc/sysctl.d/ipv6_disable.conf
-# sysctl --system
+
+# Apply changes
+sysctl --system
 ```
 ```
 # ip ad sh enp2s0f0.3
