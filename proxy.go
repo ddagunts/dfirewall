@@ -95,7 +95,8 @@ func Register(rt Route) error {
 	}
 	ednsAdd := os.Getenv("ENABLE_EDNS")
 
-	//addAllIPs := os.Getenv("ADD_ALL_IPS")
+	// HANDLE_ALL_IPS: when set, process all A records instead of just the first one
+	handleAllIPs := os.Getenv("HANDLE_ALL_IPS")
 
 	redisEnv := os.Getenv("REDIS")
 	if redisEnv == "" {
@@ -211,6 +212,9 @@ func Register(rt Route) error {
 		var padTtl uint32 = 0
 
 		var recordA bool = false
+		var ipAddresses []netip.Addr // collect all IP addresses when HANDLE_ALL_IPS is set
+		var firstIPIndex int = -1
+		
 		for i := range numAnswers {
 			if arec, ok := a.Answer[i].(*dns.A); ok {
 				recordA = true
@@ -234,18 +238,38 @@ func Register(rt Route) error {
 					a.Answer[i].Header().Ttl = 3600 // to the client as well
 				}
 
-				// respond with all records prior to first A record, and first A record
-				// TODO: add option to handle all IPs
-				ipAddress, _ = netip.ParseAddr(arec.A.String())
-				A := a.Answer[0 : i+1]
+				currentIP, _ := netip.ParseAddr(arec.A.String())
+				
+				if handleAllIPs != "" {
+					// collect all IP addresses for processing
+					ipAddresses = append(ipAddresses, currentIP)
+					if firstIPIndex == -1 {
+						firstIPIndex = i
+					}
+				} else {
+					// original behavior: handle only first A record
+					ipAddress = currentIP
+					A := a.Answer[0 : i+1]
+					a.Answer = A
+					break
+				}
+			}
+		}
+		
+		// when HANDLE_ALL_IPS is set, set ipAddress to first IP for client response
+		// but we'll process all IPs in the firewall logic below
+		if handleAllIPs != "" && len(ipAddresses) > 0 {
+			ipAddress = ipAddresses[0]
+			// respond with all records up to the last A record
+			if firstIPIndex != -1 {
+				A := a.Answer[0 : firstIPIndex+len(ipAddresses)]
 				a.Answer = A
-				break
 			}
 		}
 
-		// only target A records
-		if recordA {
-			if !(inRange(loStart, loEnd, ipAddress) || ipAddress == openRange) {
+		// helper function to process individual IP addresses
+		processIP := func(targetIP netip.Addr) {
+			if !(inRange(loStart, loEnd, targetIP) || targetIP == openRange) {
 				newTtl := time.Duration(padTtl) * time.Second
 				newTtlS := strconv.FormatFloat(newTtl.Seconds(), 'f', -1, 64)
 				domain := r.Question[0].Name
@@ -253,15 +277,14 @@ func Register(rt Route) error {
 				// Validate domain name
 				if !validateDomain(domain) {
 					log.Printf("Invalid domain: %s", domain)
-					dns.HandleFailed(w, r)
-					return
+					return // continue processing other IPs instead of failing entire request
 				}
 				
-				key := "rules:" + from + ":" + ipAddress.String() + ":" + domain
+				key := "rules:" + from + ":" + targetIP.String() + ":" + domain
 				
-				// Sanitize environment variables to prevent injection
+				// Sanitize environment variables to prevent injection  
 				sanitizedClientIP := sanitizeForShell(from)
-				sanitizedResolvedIP := sanitizeForShell(ipAddress.String())
+				sanitizedResolvedIP := sanitizeForShell(targetIP.String())
 				sanitizedDomain := sanitizeForShell(domain)
 				sanitizedTTL := sanitizeForShell(newTtlS)
 				
@@ -272,7 +295,7 @@ func Register(rt Route) error {
 				_, err := redisClient.Get(ctx, key).Result()
 				// insert into Redis
 				if err != nil {
-					log.Printf("Add %s for %s, %s %s", ipAddress, from, domain, newTtl)
+					log.Printf("Add %s for %s, %s %s", targetIP, from, domain, newTtl)
 					resp, err := redisClient.Set(ctx, key, newTtl, newTtl).Result()
 					if err != nil {
 						log.Printf("Unable to add key to Redis! %s", err.Error())
@@ -292,7 +315,7 @@ func Register(rt Route) error {
 						}
 					}
 				} else {
-					log.Printf("Update %s for %s, %s %s", ipAddress, from, domain, newTtl)
+					log.Printf("Update %s for %s, %s %s", targetIP, from, domain, newTtl)
 					resp, err := redisClient.Set(ctx, key, "", newTtl).Result()
 					if err != nil {
 						log.Printf("Unable to add key to Redis! %s", err.Error())
@@ -311,6 +334,19 @@ func Register(rt Route) error {
 						}
 					}
 				}
+			}
+		}
+
+		// only target A records
+		if recordA {
+			if handleAllIPs != "" && len(ipAddresses) > 0 {
+				// process all collected IP addresses
+				for _, ip := range ipAddresses {
+					processIP(ip)
+				}
+			} else {
+				// original behavior: process only the first IP
+				processIP(ipAddress)
 			}
 		}
 		w.WriteMsg(a)
