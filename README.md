@@ -19,12 +19,13 @@ Configuration is handled through environmental variables.  The following variabl
 PORT=                        # listening port
 UPSTREAM=8.8.8.8:53          # upstream DNS resolver host and port (REQUIRED)
 REDIS=redis://127.0.0.1:6379 # location of Redis (REQUIRED)
-INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec when it encounters a new IP address
-EXPIRE_SCRIPT=               # path of an executable for "dfirewall" to exec when Redis keys expire (enables non-Linux/non-ipset support)
+INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec when it encounters a new IP address (global fallback)
+EXPIRE_SCRIPT=               # path of an executable for "dfirewall" to exec when Redis keys expire (global fallback)
+SCRIPT_CONFIG=               # path to JSON configuration file for per-client script settings (overrides global settings)
 WEB_UI_PORT=                 # port for web-based rule management interface (e.g., 8080)
 ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6)
 DEBUG=                       # set to any value to enable verbose logging
-INVOKE_ALWAYS=               # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered, even if already present in Redis
+INVOKE_ALWAYS=               # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered (global fallback)
 ```
 # Setup on Linux
 
@@ -224,6 +225,77 @@ Once enabled, access the web interface at `http://localhost:8080` (or your serve
 
 **Security Note**: The web UI is intended for internal use only. It runs on HTTP and should not be exposed to untrusted networks.
 
+## Per-Client Script Configuration
+
+dfirewall supports advanced per-client script configuration via JSON configuration files. This allows different firewall policies and scripts for different client IP ranges or patterns.
+
+### Configuration File Format
+
+Create a JSON configuration file and set `SCRIPT_CONFIG=/path/to/config.json`:
+
+```json
+{
+  "version": "1.0",
+  "defaults": {
+    "invoke_script": "/scripts/default_invoke.sh",
+    "expire_script": "/scripts/default_expire.sh", 
+    "invoke_always": false,
+    "environment": {
+      "DEFAULT_POLICY": "deny"
+    }
+  },
+  "clients": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "description": "Corporate network",
+      "invoke_script": "/scripts/corporate_invoke.sh",
+      "invoke_always": true,
+      "environment": {
+        "SECURITY_LEVEL": "high",
+        "AUDIT_LOG": "/var/log/corporate.log"
+      }
+    },
+    {
+      "client_pattern": "10.0.0.1",
+      "description": "Admin workstation",
+      "invoke_script": "/scripts/admin_invoke.sh"
+    },
+    {
+      "client_pattern": "^172\\.16\\.(1[0-9]|2[0-9])\\..*",
+      "description": "Development subnet (regex)",
+      "invoke_script": "/scripts/dev_invoke.sh"
+    }
+  ]
+}
+```
+
+### Pattern Types Supported
+
+1. **Single IP**: `192.168.1.100` - Exact IP match
+2. **CIDR Notation**: `192.168.1.0/24` - Subnet range  
+3. **Regex Pattern**: `^192\.168\.(1|2)\..*` - Advanced pattern matching
+
+### Configuration Priority
+
+1. Client-specific settings (first matching pattern wins)
+2. Default settings from configuration file
+3. Environment variables (global fallback)
+
+### Additional Features
+
+- **Per-client environment variables**: Set custom variables for each client pattern
+- **Selective script execution**: Override `invoke_always` per client
+- **Custom expiration scripts**: Different cleanup behavior per client type
+- **Audit and logging**: Track which configuration is used for each client
+
+### Example Use Cases
+
+- **Corporate networks**: Strict auditing and high-security scripts
+- **Guest networks**: Basic firewall rules with limited access
+- **Admin workstations**: Bypass restrictions or enhanced monitoring
+- **IoT devices**: Quarantine suspicious activity with custom scripts
+- **Development subnets**: Allow external API access for testing
+
 You should see ipsets on the host being populated by the container.  Note that the second Signal IP (172.253.122.121) had a low TTL of 31s and expired out of the list already
 ```
 # ipset list
@@ -314,7 +386,7 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 - ~~add AAAA records (IPv6 support)~~ ✅ **Completed** - Added AAAA record processing for IPv6 addresses
 - ~~add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)~~ ✅ **Completed** - Added `EXPIRE_SCRIPT` with Redis keyspace notifications monitoring
 - ~~add UI for viewing rules~~ ✅ **Completed** - Added web-based UI with rule viewing, statistics, and management features
-- add better configuration options (invoke custom script(s) per client (if exist), etc)
+- ~~add better configuration options (invoke custom script(s) per client (if exist), etc)~~ ✅ **Completed** - Added JSON-based per-client script configuration with pattern matching
 - add support for checking IP and/or domain against blacklist in Redis (or file)
 - add support for checking IP and/or domain against common reputation checkers
 - add support for checking IP and/or domain by executing user-provided pass/fail script

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -46,6 +47,40 @@ type UIStats struct {
 	UniqueIPs     int `json:"unique_ips"`
 }
 
+// ClientScriptConfig represents per-client script configuration
+type ClientScriptConfig struct {
+	// Pattern for matching client IPs (supports CIDR notation, single IPs, or regex patterns)
+	ClientPattern string `json:"client_pattern"`
+	// Script to execute for matching clients (overrides global INVOKE_SCRIPT)
+	InvokeScript string `json:"invoke_script,omitempty"`
+	// Script to execute on expiration for matching clients (overrides global EXPIRE_SCRIPT)
+	ExpireScript string `json:"expire_script,omitempty"`
+	// Whether to always invoke script (overrides global INVOKE_ALWAYS)
+	InvokeAlways *bool `json:"invoke_always,omitempty"`
+	// Description for documentation purposes
+	Description string `json:"description,omitempty"`
+	// Additional environment variables to set for this client
+	Environment map[string]string `json:"environment,omitempty"`
+}
+
+// ScriptConfiguration represents the complete configuration file structure
+type ScriptConfiguration struct {
+	// Version for configuration compatibility
+	Version string `json:"version"`
+	// Global default settings (fallback when no client-specific config matches)
+	Defaults struct {
+		InvokeScript string            `json:"invoke_script,omitempty"`
+		ExpireScript string            `json:"expire_script,omitempty"`
+		InvokeAlways bool              `json:"invoke_always,omitempty"`
+		Environment  map[string]string `json:"environment,omitempty"`
+	} `json:"defaults"`
+	// Per-client configurations (processed in order - first match wins)
+	Clients []ClientScriptConfig `json:"clients"`
+}
+
+// Global variable to hold parsed configuration
+var scriptConfig *ScriptConfiguration
+
 // Input validation functions
 var (
 	validIPRegex     = regexp.MustCompile(`^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$`)
@@ -70,6 +105,250 @@ func validateDomain(domain string) bool {
 
 func validateTTL(ttl uint32) bool {
 	return ttl > 0 && ttl <= 86400 // Max 24 hours
+}
+
+// loadScriptConfiguration loads and parses the script configuration file
+func loadScriptConfiguration(configPath string) (*ScriptConfiguration, error) {
+	// ASSUMPTION: Configuration file is in JSON format for better structure and validation
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %v", err)
+	}
+	
+	var config ScriptConfiguration
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON config: %v", err)
+	}
+	
+	// Validate configuration version
+	// ASSUMPTION: Start with version "1.0" and increment for breaking changes
+	if config.Version == "" {
+		config.Version = "1.0" // Default version for backward compatibility
+	}
+	if config.Version != "1.0" {
+		return nil, fmt.Errorf("unsupported configuration version: %s (expected 1.0)", config.Version)
+	}
+	
+	// Validate and resolve script paths
+	if config.Defaults.InvokeScript != "" {
+		if err := validateInvokeScript(config.Defaults.InvokeScript); err != nil {
+			return nil, fmt.Errorf("invalid default invoke script: %v", err)
+		}
+	}
+	if config.Defaults.ExpireScript != "" {
+		if err := validateInvokeScript(config.Defaults.ExpireScript); err != nil {
+			return nil, fmt.Errorf("invalid default expire script: %v", err)
+		}
+	}
+	
+	// Validate client-specific configurations
+	for i, client := range config.Clients {
+		if client.ClientPattern == "" {
+			return nil, fmt.Errorf("client config %d: client_pattern is required", i)
+		}
+		
+		// QUESTION: Should we validate IP patterns here or at runtime?
+		// ASSUMPTION: Validate at load time to catch errors early
+		if err := validateClientPattern(client.ClientPattern); err != nil {
+			return nil, fmt.Errorf("client config %d: invalid pattern '%s': %v", i, client.ClientPattern, err)
+		}
+		
+		if client.InvokeScript != "" {
+			if err := validateInvokeScript(client.InvokeScript); err != nil {
+				return nil, fmt.Errorf("client config %d: invalid invoke script: %v", i, err)
+			}
+		}
+		if client.ExpireScript != "" {
+			if err := validateInvokeScript(client.ExpireScript); err != nil {
+				return nil, fmt.Errorf("client config %d: invalid expire script: %v", i, err)
+			}
+		}
+	}
+	
+	log.Printf("Loaded script configuration with %d client-specific rules", len(config.Clients))
+	return &config, nil
+}
+
+// validateClientPattern validates client IP matching patterns
+func validateClientPattern(pattern string) error {
+	// ASSUMPTION: Support three pattern types:
+	// 1. Single IP: 192.168.1.100
+	// 2. CIDR notation: 192.168.1.0/24
+	// 3. Regex pattern: ^192\.168\.(1|2)\..*
+	
+	// Try parsing as single IP
+	if net.ParseIP(pattern) != nil {
+		return nil
+	}
+	
+	// Try parsing as CIDR
+	if _, _, err := net.ParseCIDR(pattern); err == nil {
+		return nil
+	}
+	
+	// Try compiling as regex
+	if _, err := regexp.Compile(pattern); err == nil {
+		return nil
+	}
+	
+	return fmt.Errorf("pattern must be a valid IP address, CIDR notation, or regex")
+}
+
+// findClientConfig finds the first matching client configuration for a given IP
+func findClientConfig(clientIP string) *ClientScriptConfig {
+	if scriptConfig == nil {
+		return nil
+	}
+	
+	// ASSUMPTION: Process client configs in order - first match wins
+	for _, client := range scriptConfig.Clients {
+		if matchesClientPattern(clientIP, client.ClientPattern) {
+			return &client
+		}
+	}
+	
+	return nil // No match found
+}
+
+// matchesClientPattern checks if a client IP matches a given pattern
+func matchesClientPattern(clientIP, pattern string) bool {
+	// Try exact IP match first (most common case)
+	if clientIP == pattern {
+		return true
+	}
+	
+	// Try CIDR match
+	if _, cidr, err := net.ParseCIDR(pattern); err == nil {
+		if ip := net.ParseIP(clientIP); ip != nil {
+			return cidr.Contains(ip)
+		}
+	}
+	
+	// Try regex match
+	if regex, err := regexp.Compile(pattern); err == nil {
+		return regex.MatchString(clientIP)
+	}
+	
+	return false
+}
+
+// executeScript executes the appropriate script for a client with enhanced configuration
+func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule bool) {
+	// ASSUMPTION: Action can be "ADD" for new rules, "UPDATE" for existing rules, or "EXPIRE" for expired rules
+	
+	// Find client-specific configuration
+	clientConfig := findClientConfig(clientIP)
+	
+	var scriptToExecute string
+	var shouldExecute bool
+	var additionalEnv map[string]string
+	
+	// Determine which script to execute and whether to execute it
+	if action == "EXPIRE" {
+		// Handle expiration scripts
+		if clientConfig != nil && clientConfig.ExpireScript != "" {
+			scriptToExecute = clientConfig.ExpireScript
+			shouldExecute = true
+			additionalEnv = clientConfig.Environment
+			if os.Getenv("DEBUG") != "" {
+				log.Printf("Using client-specific expire script for %s: %s", clientIP, scriptToExecute)
+			}
+		} else if scriptConfig != nil && scriptConfig.Defaults.ExpireScript != "" {
+			scriptToExecute = scriptConfig.Defaults.ExpireScript
+			shouldExecute = true
+			additionalEnv = scriptConfig.Defaults.Environment
+		} else if expireScript := os.Getenv("EXPIRE_SCRIPT"); expireScript != "" {
+			scriptToExecute = expireScript
+			shouldExecute = true
+		}
+	} else {
+		// Handle invoke scripts (ADD/UPDATE actions)
+		if clientConfig != nil && clientConfig.InvokeScript != "" {
+			scriptToExecute = clientConfig.InvokeScript
+			additionalEnv = clientConfig.Environment
+			
+			// Determine if we should execute based on client-specific settings
+			if isNewRule {
+				shouldExecute = true // Always execute for new rules
+			} else {
+				// For existing rules, check invoke_always setting
+				if clientConfig.InvokeAlways != nil {
+					shouldExecute = *clientConfig.InvokeAlways
+				} else if scriptConfig != nil {
+					shouldExecute = scriptConfig.Defaults.InvokeAlways
+				} else {
+					shouldExecute = os.Getenv("INVOKE_ALWAYS") != ""
+				}
+			}
+			
+			if os.Getenv("DEBUG") != "" {
+				log.Printf("Using client-specific invoke script for %s: %s (execute=%t)", clientIP, scriptToExecute, shouldExecute)
+			}
+		} else if scriptConfig != nil && scriptConfig.Defaults.InvokeScript != "" {
+			scriptToExecute = scriptConfig.Defaults.InvokeScript
+			additionalEnv = scriptConfig.Defaults.Environment
+			
+			if isNewRule {
+				shouldExecute = true
+			} else {
+				shouldExecute = scriptConfig.Defaults.InvokeAlways
+			}
+		} else if globalInvoke := os.Getenv("INVOKE_SCRIPT"); globalInvoke != "" {
+			scriptToExecute = globalInvoke
+			
+			if isNewRule {
+				shouldExecute = true
+			} else {
+				shouldExecute = os.Getenv("INVOKE_ALWAYS") != ""
+			}
+		}
+	}
+	
+	// Execute the script if determined appropriate
+	if scriptToExecute != "" && shouldExecute {
+		// Set standard environment variables
+		os.Setenv("CLIENT_IP", sanitizeForShell(clientIP))
+		os.Setenv("RESOLVED_IP", sanitizeForShell(resolvedIP))
+		os.Setenv("DOMAIN", sanitizeForShell(domain))
+		os.Setenv("TTL", sanitizeForShell(ttl))
+		os.Setenv("ACTION", sanitizeForShell(action))
+		
+		// Set additional client-specific environment variables
+		// ASSUMPTION: Client-specific env vars override global ones for security and flexibility
+		if additionalEnv != nil {
+			for key, value := range additionalEnv {
+				os.Setenv(key, sanitizeForShell(value))
+				if os.Getenv("DEBUG") != "" {
+					log.Printf("Set additional env var for client %s: %s=%s", clientIP, key, value)
+				}
+			}
+		}
+		
+		// Execute the script
+		cmd := exec.Command(scriptToExecute)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("Script execution failed for %s (%s): %v\nOutput: %s", clientIP, action, err, output)
+		} else {
+			if os.Getenv("DEBUG") != "" {
+				log.Printf("Script execution succeeded for %s (%s):\n%s", clientIP, action, output)
+			} else {
+				log.Printf("Script executed successfully for %s (%s): %s", clientIP, action, scriptToExecute)
+			}
+		}
+		
+		// Clean up additional environment variables to prevent leakage
+		// ASSUMPTION: Clean up custom env vars to prevent them affecting subsequent executions
+		if additionalEnv != nil {
+			for key := range additionalEnv {
+				os.Unsetenv(key)
+			}
+		}
+	} else {
+		if os.Getenv("DEBUG") != "" {
+			log.Printf("No script execution for %s (%s): script=%s, shouldExecute=%t", clientIP, action, scriptToExecute, shouldExecute)
+		}
+	}
 }
 
 func validateInvokeScript(scriptPath string) error {
@@ -165,6 +444,19 @@ func Register(rt Route) error {
 		log.Printf("WEB_UI_PORT is set to %s", webUIPort)
 	}
 
+	// SCRIPT_CONFIG: JSON configuration file for per-client script settings
+	scriptConfigPath := os.Getenv("SCRIPT_CONFIG")
+	if scriptConfigPath != "" {
+		config, err := loadScriptConfiguration(scriptConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load script configuration: %v", err)
+		}
+		scriptConfig = config
+		log.Printf("SCRIPT_CONFIG loaded from %s", scriptConfigPath)
+	} else {
+		log.Printf("SCRIPT_CONFIG env var not set, using environment variables for script configuration")
+	}
+
 	opt, err := redis.ParseURL(redisEnv)
 	if err != nil {
 		panic(err)
@@ -229,26 +521,8 @@ func Register(rt Route) error {
 						
 						log.Printf("Key expired: %s (client=%s, resolved=%s, domain=%s)", expiredKey, clientIP, resolvedIP, domain)
 						
-						// Set environment variables for the expire script
-						// ASSUMPTION: Use same env vars as invoke script for consistency
-						os.Setenv("CLIENT_IP", sanitizeForShell(clientIP))
-						os.Setenv("RESOLVED_IP", sanitizeForShell(resolvedIP))
-						os.Setenv("DOMAIN", sanitizeForShell(domain))
-						os.Setenv("TTL", "0") // TTL is 0 for expired keys
-						os.Setenv("ACTION", "EXPIRE") // Indicate this is an expiration event
-						
-						// Execute the expire script
-						cmd := exec.Command(expireScript)
-						output, err := cmd.CombinedOutput()
-						if err != nil {
-							log.Printf("Expire script failed for %s: %v\nOutput: %s", expiredKey, err, output)
-						} else {
-							if os.Getenv("DEBUG") != "" {
-								log.Printf("Expire script succeeded for %s:\n%s", expiredKey, output)
-							} else {
-								log.Printf("Expire script executed successfully for %s", expiredKey)
-							}
-						}
+						// Use enhanced script execution system for expiration
+						executeScript(clientIP, resolvedIP, domain, "0", "EXPIRE", false)
 					} else {
 						log.Printf("WARNING: Malformed expired key format: %s", expiredKey)
 					}
@@ -489,17 +763,8 @@ func Register(rt Route) error {
 					if os.Getenv("DEBUG") != "" {
 						log.Printf("Redis insert: %s", resp)
 					}
-					// first appearance, invoke custom script
-					if invoke != "" {
-						cmd := exec.Command(invoke)
-						output, err := cmd.CombinedOutput()
-						if err != nil {
-							log.Printf("Invoke command failed: %v\nOutput: %s", err, output)
-							// Continue processing instead of fatal exit
-						} else if os.Getenv("DEBUG") != "" {
-							fmt.Printf("Invoke command succeeded:\n%s", output)
-						}
-					}
+					// first appearance, use enhanced script execution system
+					executeScript(from, targetIP.String(), domain, newTtlS, "ADD", true)
 				} else {
 					log.Printf("Update %s for %s, %s %s", targetIP, from, domain, newTtl)
 					resp, err := redisClient.Set(ctx, key, "", newTtl).Result()
@@ -509,16 +774,8 @@ func Register(rt Route) error {
 					if os.Getenv("DEBUG") != "" {
 						log.Printf("Redis insert: %s", resp)
 					}
-					if invoke != "" && invoke_always != "" {
-						cmd := exec.Command(invoke)
-						output, err := cmd.CombinedOutput()
-						if err != nil {
-							log.Printf("Invoke command failed: %v\nOutput: %s", err, output)
-							// Continue processing instead of fatal exit
-						} else if os.Getenv("DEBUG") != "" {
-							fmt.Printf("Invoke command succeeded:\n%s", output)
-						}
-					}
+					// existing rule update, use enhanced script execution system
+					executeScript(from, targetIP.String(), domain, newTtlS, "UPDATE", false)
 				}
 			}
 		}

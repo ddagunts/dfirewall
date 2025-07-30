@@ -1,0 +1,67 @@
+{
+  "version": "1.0",
+  "defaults": {
+    "invoke_script": "/scripts/invoke_linux_ipset.sh",
+    "expire_script": "/scripts/expire_generic.sh",
+    "invoke_always": false,
+    "environment": {
+      "DEFAULT_POLICY": "deny",
+      "LOG_LEVEL": "info"
+    }
+  },
+  "clients": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "description": "Corporate network - use strict firewall rules",
+      "invoke_script": "/scripts/invoke_corporate.sh",
+      "expire_script": "/scripts/expire_corporate.sh",
+      "invoke_always": true,
+      "environment": {
+        "SECURITY_LEVEL": "high",
+        "AUDIT_LOG": "/var/log/corporate-firewall.log",
+        "NOTIFICATION_EMAIL": "security@company.com"
+      }
+    },
+    {
+      "client_pattern": "192.168.100.0/24",
+      "description": "Guest network - use basic firewall rules",
+      "invoke_script": "/scripts/invoke_guest.sh",
+      "invoke_always": false,
+      "environment": {
+        "SECURITY_LEVEL": "basic",
+        "BANDWIDTH_LIMIT": "10Mbps"
+      }
+    },
+    {
+      "client_pattern": "10.0.0.1",
+      "description": "Admin workstation - bypass normal restrictions",
+      "invoke_script": "/scripts/invoke_admin.sh",
+      "invoke_always": true,
+      "environment": {
+        "SECURITY_LEVEL": "bypass",
+        "ADMIN_ACCESS": "true"
+      }
+    },
+    {
+      "client_pattern": "^172\\.16\\.(1[0-9]|2[0-9]|3[0-1])\\..*",
+      "description": "Development subnet (regex pattern) - development firewall rules",
+      "invoke_script": "/scripts/invoke_development.sh",
+      "environment": {
+        "SECURITY_LEVEL": "dev",
+        "ALLOW_EXTERNAL_APIS": "true"
+      }
+    },
+    {
+      "client_pattern": "192.168.200.0/24",
+      "description": "IoT devices - restricted access with custom expiration handling",
+      "invoke_script": "/scripts/invoke_iot.sh",
+      "expire_script": "/scripts/expire_iot.sh",
+      "invoke_always": false,
+      "environment": {
+        "SECURITY_LEVEL": "iot",
+        "MAX_CONNECTIONS": "5",
+        "QUARANTINE_SUSPICIOUS": "true"
+      }
+    }
+  ]
+}
