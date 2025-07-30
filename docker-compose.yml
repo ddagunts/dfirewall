@@ -41,6 +41,7 @@ services:
       #- "SCRIPT_CONFIG=/config/script-config.json" # Enable per-client script configuration
       #- "BLACKLIST_CONFIG=/config/blacklist-config.json" # Enable IP/domain blacklisting
       #- "REPUTATION_CONFIG=/config/reputation-config.json" # Enable IP/domain reputation checking
+      #- "AI_CONFIG=/config/ai-config.json" # Enable AI-powered threat detection :D
       #- "WEB_UI_PORT=8080" # Enable web UI for rule management
       - "INVOKE_ALWAYS=1"
     hostname: "dfirewall"

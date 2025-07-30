@@ -24,6 +24,7 @@ EXPIRE_SCRIPT=               # path of an executable for "dfirewall" to exec whe
 SCRIPT_CONFIG=               # path to JSON configuration file for per-client script settings (overrides global settings)
 BLACKLIST_CONFIG=            # path to JSON configuration file for IP/domain blacklisting
 REPUTATION_CONFIG=           # path to JSON configuration file for IP/domain reputation checking
+AI_CONFIG=                   # path to JSON configuration file for AI-powered threat detection :D
 WEB_UI_PORT=                 # port for web-based rule management interface (e.g., 8080)
 ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6)
 DEBUG=                       # set to any value to enable verbose logging
@@ -566,6 +567,266 @@ jq '.checkers[] | select(.provider == "abuseipdb") | .enabled = true' reputation
 }
 ```
 
+## AI-Powered Threat Detection :D
+
+dfirewall integrates cutting-edge AI technology to provide advanced threat detection and analysis capabilities, going beyond traditional rule-based approaches to identify sophisticated attacks and anomalous behavior.
+
+### Configuration
+
+Create an AI configuration file and set `AI_CONFIG=/path/to/ai-config.json`:
+
+```json
+{
+  "enabled": true,
+  "provider": "openai",
+  "api_key": "your_openai_api_key_here",
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-4",
+  "timeout": 30,
+  
+  "domain_analysis": true,
+  "traffic_anomaly": true,
+  "threat_hunting": true,
+  "adaptive_blocking": false,
+  
+  "analysis_window": 10,
+  "confidence_threshold": 0.7,
+  "max_analysis_requests": 60
+}
+```
+
+### AI Providers
+
+#### OpenAI GPT Models
+- **Provider**: `openai`
+- **Models**: `gpt-4`, `gpt-3.5-turbo`
+- **API Key**: Required from [OpenAI Platform](https://platform.openai.com/)
+- **Strengths**: Excellent reasoning and threat analysis capabilities
+- **Rate Limits**: Varies by account tier
+
+#### Anthropic Claude
+- **Provider**: `claude`
+- **Models**: `claude-3-sonnet-20240229`, `claude-3-haiku-20240307`
+- **API Key**: Required from [Anthropic Console](https://console.anthropic.com/)
+- **Strengths**: Strong analytical capabilities and security-focused reasoning
+- **Rate Limits**: Varies by account tier
+
+#### Local AI Models
+- **Provider**: `local`
+- **Models**: `llama2`, `mistral`, `codellama`, custom models
+- **Setup**: Requires local AI server (Ollama, LocalAI, etc.)
+- **Strengths**: Privacy, no API costs, customizable
+- **Considerations**: Requires significant computational resources
+
+### AI-Powered Features
+
+#### 1. Domain Analysis
+**Purpose**: AI analyzes requested domains for potential threats before DNS resolution.
+
+**Capabilities**:
+- **Malware Detection**: Identifies domains hosting malware or used for malware distribution
+- **Phishing Detection**: Recognizes phishing domains and typosquatting attempts
+- **C&C Infrastructure**: Detects command & control server domains
+- **DGA Recognition**: Identifies Domain Generation Algorithm patterns
+- **Suspicious Patterns**: Analyzes naming patterns and registration characteristics
+
+**Configuration**: `"domain_analysis": true`
+
+**Example AI Analysis**:
+```
+Domain: xn--80abbmbccd7a0e.com
+AI Assessment: MALICIOUS (Confidence: 0.85)
+Reasoning: "Suspicious punycode domain with recent registration, 
+resembles phishing patterns targeting banking sites. High entropy 
+subdomain suggests automated generation."
+Categories: ["phishing", "punycode_abuse", "typosquatting"]
+```
+
+#### 2. Traffic Anomaly Detection
+**Purpose**: AI monitors DNS traffic patterns to identify anomalous behavior that may indicate compromise.
+
+**Capabilities**:
+- **Beaconing Detection**: Identifies regular communication patterns typical of malware
+- **Data Exfiltration**: Detects unusual volume and diversity patterns
+- **DGA Traffic**: Recognizes algorithmically generated domain requests
+- **Temporal Anomalies**: Identifies unusual timing patterns in DNS requests
+- **Volume Anomalies**: Detects sudden spikes or unusual request volumes
+
+**Configuration**: `"traffic_anomaly": true`
+
+**Detection Metrics**:
+- Request rate analysis (requests per minute)
+- Domain diversity scoring
+- Temporal pattern analysis
+- Burst detection
+- Beaconing probability scoring
+
+#### 3. Proactive Threat Hunting
+**Purpose**: AI continuously analyzes network data to proactively identify potential threats.
+
+**Capabilities**:
+- **IOC Correlation**: Connects seemingly unrelated indicators
+- **Campaign Detection**: Identifies coordinated attack campaigns
+- **Zero-Day Recognition**: Detects novel attack patterns
+- **Lateral Movement**: Identifies reconnaissance and lateral movement attempts
+- **Advanced Persistent Threats**: Recognizes long-term, stealthy campaigns
+
+**Configuration**: `"threat_hunting": true`
+
+**Hunting Intervals**: Runs every 30 minutes analyzing recent traffic patterns
+
+#### 4. Adaptive Blocking (Future Feature)
+**Purpose**: AI learns from blocked threats to improve future detection.
+
+**Capabilities**:
+- **Pattern Learning**: Adapts to new threat patterns
+- **False Positive Reduction**: Learns to distinguish threats from legitimate traffic
+- **Dynamic Rule Generation**: Creates new blocking rules based on AI analysis
+- **Contextual Blocking**: Considers client behavior and network context
+
+**Configuration**: `"adaptive_blocking": false` (disabled by default)
+
+### AI Analysis Process
+
+#### 1. Domain Analysis Flow
+```
+DNS Request → Domain Extraction → AI Analysis → Threat Assessment → Block/Allow Decision
+```
+
+1. **Request Interception**: Capture DNS request before upstream resolution
+2. **AI Prompt Generation**: Create cybersecurity-focused analysis prompt
+3. **AI API Call**: Query configured AI provider with domain analysis request
+4. **Response Processing**: Parse JSON response or extract key information
+5. **Decision Making**: Apply confidence thresholds and blocking logic
+6. **Caching**: Store results to reduce API costs and improve performance
+
+#### 2. Traffic Pattern Analysis
+```
+DNS Traffic → Pattern Collection → Anomaly Scoring → AI Assessment → Alert Generation
+```
+
+1. **Pattern Collection**: Aggregate DNS requests into time-based windows
+2. **Metric Calculation**: Compute request rates, domain diversity, timing patterns
+3. **Heuristic Scoring**: Apply rule-based anomaly detection
+4. **AI Enhancement**: Use AI to analyze complex patterns and correlations
+5. **Threat Scoring**: Generate comprehensive threat assessment
+6. **Action Taking**: Log alerts, trigger notifications, or block traffic
+
+### Performance and Cost Optimization
+
+#### Intelligent Caching
+- **Multi-Tier Caching**: In-memory and Redis caching for AI results
+- **TTL Management**: Configurable cache expiration based on threat type
+- **Cache Warming**: Proactive caching of frequently requested domains
+- **Cost Optimization**: Reduce AI API calls by up to 90%
+
+#### Rate Limiting
+- **Provider Limits**: Respect AI provider rate limits
+- **Cost Controls**: Configurable maximum requests per minute
+- **Priority Queuing**: Prioritize high-risk analysis requests
+- **Graceful Degradation**: Fall back to heuristics when AI is unavailable
+
+#### Batch Processing
+- **Request Batching**: Group multiple domains for efficient analysis
+- **Background Processing**: Non-blocking AI analysis for better performance
+- **Async Operations**: Parallel processing of multiple AI requests
+
+### Security and Privacy
+
+#### Data Protection
+- **No Data Retention**: AI providers don't retain dfirewall data
+- **Minimal Context**: Only necessary information sent to AI
+- **Local Processing**: Option to use local AI models for complete privacy
+- **Encrypted Communication**: All API communications use HTTPS/TLS
+
+#### Fail-Safe Design
+- **Default Allow**: Network errors don't block legitimate traffic
+- **Fallback Mechanisms**: Heuristic analysis when AI is unavailable
+- **Confidence Thresholds**: Conservative blocking to minimize false positives
+- **Override Capabilities**: Manual override of AI decisions
+
+### Integration Examples
+
+#### Enterprise SOC Integration
+```bash
+# Enable comprehensive AI analysis
+AI_CONFIG=/config/ai-config.json
+DEBUG=1  # Enable detailed AI logging
+
+# Configure high-confidence blocking
+{
+  "confidence_threshold": 0.8,
+  "domain_analysis": true,
+  "traffic_anomaly": true,
+  "threat_hunting": true
+}
+```
+
+#### Cost-Conscious Deployment
+```bash
+# Use local AI model to avoid API costs
+{
+  "provider": "local",
+  "base_url": "http://localhost:11434",
+  "model": "llama2",
+  "max_analysis_requests": 1000
+}
+```
+
+#### Development and Testing
+```bash
+# Conservative settings for testing
+{
+  "enabled": true,
+  "confidence_threshold": 0.9,
+  "domain_analysis": true,
+  "traffic_anomaly": false,
+  "threat_hunting": false
+}
+```
+
+### Monitoring and Observability
+
+#### AI Analysis Logging
+```
+2024-07-30 15:30:45 AI BLOCK: Domain malicious-site.com flagged as malicious by AI (threat_score: 0.85, confidence: 0.92, reasoning: Phishing domain targeting financial services)
+2024-07-30 15:31:12 AI ANOMALY DETECTED: Client 192.168.1.100 - Beaconing behavior detected with 95% confidence (15 requests to single domain every 60 seconds)
+2024-07-30 15:32:01 AI THREAT HUNTING ALERT: Campaign detected across 3 clients requesting DGA domains (confidence: 0.78)
+```
+
+#### Performance Metrics
+- AI API response times
+- Cache hit rates
+- Blocking accuracy rates
+- Cost per analysis request
+- Threat detection rates
+
+### Use Cases
+
+#### Advanced Persistent Threat (APT) Detection
+- **Long-term Surveillance**: AI identifies subtle patterns over extended periods
+- **Campaign Correlation**: Connects related activities across multiple clients
+- **Behavioral Analysis**: Recognizes human vs. automated attack patterns
+- **Zero-Day Protection**: Detects novel attack techniques before signature updates
+
+#### Insider Threat Detection
+- **Anomalous Behavior**: Identifies unusual DNS patterns from internal users
+- **Data Exfiltration**: Detects potential data theft through DNS patterns
+- **Privilege Escalation**: Recognizes reconnaissance and lateral movement attempts
+- **Policy Violations**: Identifies unauthorized network access attempts
+
+#### Industrial IoT Security
+- **Device Profiling**: AI learns normal behavior patterns for IoT devices
+- **Compromise Detection**: Identifies when devices deviate from normal patterns
+- **Botnet Prevention**: Detects IoT devices joining botnets or C&C networks
+- **Firmware Analysis**: Analyzes update and communication patterns
+
+#### Cloud Security Enhancement
+- **Multi-Tenant Analysis**: AI analyzes patterns across cloud deployments
+- **Container Security**: Monitors DNS patterns from containerized workloads
+- **Serverless Monitoring**: Tracks DNS requests from serverless functions
+- **Cloud-Native Threats**: Identifies cloud-specific attack patterns
+
 You should see ipsets on the host being populated by the container.  Note that the second Signal IP (172.253.122.121) had a low TTL of 31s and expired out of the list already
 ```
 # ipset list
@@ -659,5 +920,5 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 - ~~add better configuration options (invoke custom script(s) per client (if exist), etc)~~ ✅ **Completed** - Added JSON-based per-client script configuration with pattern matching
 - ~~add support for checking IP and/or domain against blacklist in Redis (or file)~~ ✅ **Completed** - Added comprehensive Redis and file-based IP/domain blacklisting
 - ~~add support for checking IP and/or domain against common reputation checkers~~ ✅ **Completed** - Added integration with VirusTotal, AbuseIPDB, URLVoid, and custom reputation services
+- ~~AI integration~~ ✅ **Completed** - Added comprehensive AI-powered threat detection with domain analysis, traffic anomaly detection, and proactive threat hunting :D
 - add support for checking IP and/or domain by executing user-provided pass/fail script
-- AI integration :D

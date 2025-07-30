@@ -82,6 +82,103 @@ type ScriptConfiguration struct {
 // Global variable to hold parsed configuration
 var scriptConfig *ScriptConfiguration
 
+// AI Integration Data Structures :D
+
+// AIConfig represents AI-powered features configuration
+type AIConfig struct {
+	// QUESTION: Should we support multiple AI providers (OpenAI, Claude, local models)?
+	// ASSUMPTION: Starting with OpenAI API but designed for extensibility
+	Enabled        bool   `json:"enabled"`           // Global AI features enable/disable
+	Provider       string `json:"provider"`          // AI provider (openai, claude, local, etc.)
+	APIKey         string `json:"api_key,omitempty"` // API key for cloud providers
+	BaseURL        string `json:"base_url"`          // API base URL (for custom endpoints)
+	Model          string `json:"model"`             // AI model to use (gpt-4, claude-3, etc.)
+	Timeout        int    `json:"timeout"`           // Request timeout in seconds
+	
+	// Feature toggles
+	DomainAnalysis    bool `json:"domain_analysis"`     // AI-powered domain analysis
+	TrafficAnomaly    bool `json:"traffic_anomaly"`     // Anomaly detection in DNS patterns
+	ThreatHunting     bool `json:"threat_hunting"`      // AI-assisted threat hunting
+	AdaptiveBlocking  bool `json:"adaptive_blocking"`   // Learn and adapt blocking rules
+	
+	// Analysis settings
+	AnalysisWindow    int     `json:"analysis_window"`    // Time window for pattern analysis (minutes)
+	ConfidenceThreshold float64 `json:"confidence_threshold"` // Minimum confidence to take action (0.0-1.0)
+	MaxAnalysisRequests int     `json:"max_analysis_requests"` // Rate limit for AI API calls per minute
+}
+
+// AIAnalysisRequest represents a request for AI analysis
+type AIAnalysisRequest struct {
+	Type        string                 `json:"type"`         // "domain", "traffic_pattern", "anomaly"
+	Target      string                 `json:"target"`       // Domain, IP, or pattern to analyze
+	Context     map[string]interface{} `json:"context"`      // Additional context data
+	ClientIP    string                 `json:"client_ip"`    // Client making the request
+	Timestamp   time.Time              `json:"timestamp"`    // When the analysis was requested
+	
+	// Traffic pattern data for anomaly detection
+	RecentDomains   []string `json:"recent_domains,omitempty"`   // Recent domains accessed by client
+	RequestCounts   []int    `json:"request_counts,omitempty"`   // Request counts over time
+	TimeIntervals   []int    `json:"time_intervals,omitempty"`   // Time intervals between requests
+}
+
+// AIAnalysisResult represents the result of AI analysis
+type AIAnalysisResult struct {
+	RequestID      string    `json:"request_id"`       // Unique identifier for this analysis
+	Type           string    `json:"type"`             // Type of analysis performed
+	Target         string    `json:"target"`           // What was analyzed
+	
+	// Analysis results
+	ThreatScore    float64   `json:"threat_score"`     // Threat score (0.0=safe, 1.0=dangerous)
+	Confidence     float64   `json:"confidence"`       // AI confidence in the result (0.0-1.0)
+	IsMalicious    bool      `json:"is_malicious"`     // Whether target is considered malicious
+	IsAnomaly      bool      `json:"is_anomaly"`       // Whether pattern is anomalous
+	
+	// Detailed analysis
+	Reasoning      string    `json:"reasoning"`        // AI explanation of the decision
+	Categories     []string  `json:"categories"`       // Threat categories (malware, phishing, etc.)
+	Indicators     []string  `json:"indicators"`       // Specific indicators of compromise
+	Recommendations []string `json:"recommendations"`  // Recommended actions
+	
+	// Metadata
+	Provider       string    `json:"provider"`         // AI provider used
+	Model          string    `json:"model"`            // AI model used
+	ProcessingTime float64   `json:"processing_time"`  // Time taken for analysis (seconds)
+	Timestamp      time.Time `json:"timestamp"`        // When analysis was completed
+	Cached         bool      `json:"cached"`           // Whether result came from cache
+}
+
+// AITrafficPattern represents detected traffic patterns for analysis
+type AITrafficPattern struct {
+	ClientIP       string    `json:"client_ip"`        // Client IP address
+	WindowStart    time.Time `json:"window_start"`     // Start of analysis window
+	WindowEnd      time.Time `json:"window_end"`       // End of analysis window
+	
+	// Traffic metrics
+	TotalRequests  int       `json:"total_requests"`   // Total DNS requests in window
+	UniqueDomains  int       `json:"unique_domains"`   // Number of unique domains
+	FailedRequests int       `json:"failed_requests"`  // Failed/blocked requests
+	
+	// Domain patterns
+	TopDomains     []string  `json:"top_domains"`      // Most frequently requested domains
+	NewDomains     []string  `json:"new_domains"`      // Newly seen domains
+	SuspiciousDomains []string `json:"suspicious_domains"` // Domains flagged by basic rules
+	
+	// Timing patterns
+	RequestRate    float64   `json:"request_rate"`     // Requests per minute
+	Burstiness     float64   `json:"burstiness"`       // Measure of request clustering
+	Periodicity    float64   `json:"periodicity"`      // Detected periodic patterns
+	
+	// Behavioral indicators
+	DGALikeDomains []string  `json:"dga_like_domains"` // Domains resembling DGA
+	BeaconingScore float64   `json:"beaconing_score"`  // Likelihood of C&C beaconing
+	ExfiltrationScore float64 `json:"exfiltration_score"` // Likelihood of data exfiltration
+}
+
+// Global variables for AI integration
+var aiConfig *AIConfig
+var aiAnalysisCache map[string]*AIAnalysisResult
+var trafficPatterns map[string]*AITrafficPattern
+
 // BlacklistConfig represents blacklist configuration
 type BlacklistConfig struct {
 	// Redis-based blacklists
@@ -384,6 +481,906 @@ func loadReputationConfiguration(configPath string) (*ReputationConfig, error) {
 	
 	log.Printf("Loaded reputation configuration with %d checkers", len(config.Checkers))
 	return &config, nil
+}
+
+// AI Configuration Loading and Management :D
+
+// loadAIConfiguration loads AI features configuration from JSON file
+func loadAIConfiguration(configPath string) (*AIConfig, error) {
+	// ASSUMPTION: Configuration file must exist and be readable
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("AI configuration file does not exist: %s", configPath)
+	}
+
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read AI configuration file: %w", err)
+	}
+
+	var config AIConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse AI configuration JSON: %w", err)
+	}
+
+	// ASSUMPTION: Validate essential configuration fields
+	if config.Enabled {
+		if config.Provider == "" {
+			return nil, fmt.Errorf("AI provider must be specified when AI is enabled")
+		}
+		
+		if config.Provider != "local" && config.APIKey == "" {
+			return nil, fmt.Errorf("API key is required for cloud AI providers")
+		}
+		
+		if config.Model == "" {
+			// ASSUMPTION: Set default models based on provider
+			switch config.Provider {
+			case "openai":
+				config.Model = "gpt-4"
+			case "claude":
+				config.Model = "claude-3-sonnet-20240229"
+			case "local":
+				config.Model = "llama2"
+			default:
+				return nil, fmt.Errorf("unknown AI provider: %s", config.Provider)
+			}
+		}
+		
+		if config.BaseURL == "" {
+			// ASSUMPTION: Set default base URLs for known providers
+			switch config.Provider {
+			case "openai":
+				config.BaseURL = "https://api.openai.com/v1"
+			case "claude":
+				config.BaseURL = "https://api.anthropic.com"
+			case "local":
+				config.BaseURL = "http://localhost:8000" // Default for local models
+			}
+		}
+		
+		// ASSUMPTION: Set reasonable defaults for unspecified values
+		if config.Timeout == 0 {
+			config.Timeout = 30 // 30 seconds default timeout
+		}
+		if config.AnalysisWindow == 0 {
+			config.AnalysisWindow = 10 // 10 minutes default analysis window
+		}
+		if config.ConfidenceThreshold == 0 {
+			config.ConfidenceThreshold = 0.7 // 70% confidence threshold
+		}
+		if config.MaxAnalysisRequests == 0 {
+			config.MaxAnalysisRequests = 60 // 60 requests per minute default
+		}
+	}
+
+	log.Printf("Loaded AI configuration: provider=%s, model=%s, features=[domain_analysis=%v, traffic_anomaly=%v, threat_hunting=%v, adaptive_blocking=%v]",
+		config.Provider, config.Model, config.DomainAnalysis, config.TrafficAnomaly, config.ThreatHunting, config.AdaptiveBlocking)
+	return &config, nil
+}
+
+// initializeAISystem initializes the AI analysis system
+func initializeAISystem() {
+	// ASSUMPTION: Initialize global variables and caches
+	if aiAnalysisCache == nil {
+		aiAnalysisCache = make(map[string]*AIAnalysisResult)
+	}
+	if trafficPatterns == nil {
+		trafficPatterns = make(map[string]*AITrafficPattern)
+	}
+	
+	if aiConfig != nil && aiConfig.Enabled {
+		log.Printf("AI system initialized with provider: %s, model: %s", aiConfig.Provider, aiConfig.Model)
+		log.Printf("AI features enabled: domain_analysis=%v, traffic_anomaly=%v, threat_hunting=%v, adaptive_blocking=%v",
+			aiConfig.DomainAnalysis, aiConfig.TrafficAnomaly, aiConfig.ThreatHunting, aiConfig.AdaptiveBlocking)
+		
+		// Start background processes for AI features
+		if aiConfig.TrafficAnomaly {
+			go trafficAnomalyDetector()
+		}
+		if aiConfig.ThreatHunting {
+			go threatHuntingEngine()
+		}
+	}
+}
+
+// AI Analysis Functions :D
+
+// analyzeWithAI performs AI-powered analysis of domains, IPs, or traffic patterns
+func analyzeWithAI(request *AIAnalysisRequest, redisClient *redis.Client) *AIAnalysisResult {
+	if aiConfig == nil || !aiConfig.Enabled {
+		// Return neutral result when AI is disabled
+		return &AIAnalysisResult{
+			RequestID:   generateRequestID(),
+			Type:        request.Type,
+			Target:      request.Target,
+			ThreatScore: 0.5,
+			Confidence:  0.0,
+			IsMalicious: false,
+			IsAnomaly:   false,
+			Reasoning:   "AI analysis disabled",
+			Provider:    "disabled",
+			Timestamp:   time.Now(),
+		}
+	}
+
+	startTime := time.Now()
+	requestID := generateRequestID()
+	
+	// ASSUMPTION: Check cache first to avoid duplicate AI requests
+	cacheKey := fmt.Sprintf("ai:%s:%s", request.Type, request.Target)
+	if cached, exists := aiAnalysisCache[cacheKey]; exists {
+		// ASSUMPTION: Cache results for 1 hour to reduce AI API costs
+		if time.Since(cached.Timestamp) < time.Hour {
+			cached.Cached = true
+			return cached
+		}
+		delete(aiAnalysisCache, cacheKey)
+	}
+
+	var result *AIAnalysisResult
+	var err error
+
+	// ASSUMPTION: Route analysis to appropriate AI function based on type
+	switch request.Type {
+	case "domain":
+		result, err = analyzeDomainWithAI(request.Target, requestID)
+	case "traffic_pattern":
+		result, err = analyzeTrafficPatternWithAI(request, requestID)
+	case "anomaly":
+		result, err = analyzeAnomalyWithAI(request, requestID)
+	default:
+		err = fmt.Errorf("unknown analysis type: %s", request.Type)
+	}
+
+	if err != nil {
+		log.Printf("AI analysis error for %s (%s): %v", request.Target, request.Type, err)
+		// Return neutral result on error to avoid blocking legitimate traffic
+		return &AIAnalysisResult{
+			RequestID:   requestID,
+			Type:        request.Type,
+			Target:      request.Target,
+			ThreatScore: 0.5,
+			Confidence:  0.0,
+			IsMalicious: false,
+			IsAnomaly:   false,
+			Reasoning:   fmt.Sprintf("Analysis error: %v", err),
+			Provider:    aiConfig.Provider,
+			Timestamp:   time.Now(),
+		}
+	}
+
+	result.ProcessingTime = time.Since(startTime).Seconds()
+	result.Cached = false
+
+	// Cache successful results
+	aiAnalysisCache[cacheKey] = result
+
+	// QUESTION: Should we also store AI analysis results in Redis for persistence?
+	// ASSUMPTION: Store in Redis for historical analysis and sharing between instances
+	if redisClient != nil {
+		ctx := context.Background()
+		resultJSON, _ := json.Marshal(result)
+		redisKey := fmt.Sprintf("dfirewall:ai:results:%s", requestID)
+		redisClient.Set(ctx, redisKey, resultJSON, 24*time.Hour) // Keep for 24 hours
+	}
+
+	return result
+}
+
+// analyzeDomainWithAI performs AI-powered domain analysis
+func analyzeDomainWithAI(domain, requestID string) (*AIAnalysisResult, error) {
+	// ASSUMPTION: Construct domain analysis prompt with cybersecurity context
+	prompt := fmt.Sprintf(`Analyze this domain for potential security threats: %s
+
+Please evaluate the domain for:
+1. Malware hosting or distribution
+2. Phishing attempts
+3. Command & control (C2) infrastructure
+4. Domain generation algorithm (DGA) patterns
+5. Suspicious naming patterns or typosquatting
+6. Recent registration or short TTL
+
+Respond with a JSON object containing:
+{
+  "threat_score": 0.0-1.0 (0=safe, 1=dangerous),
+  "confidence": 0.0-1.0,
+  "is_malicious": boolean,
+  "reasoning": "detailed explanation",
+  "categories": ["category1", "category2"],
+  "indicators": ["indicator1", "indicator2"],
+  "recommendations": ["action1", "action2"]
+}`, domain)
+
+	response, err := callAI(prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	// ASSUMPTION: Parse AI response as JSON
+	var aiResponse struct {
+		ThreatScore     float64  `json:"threat_score"`
+		Confidence      float64  `json:"confidence"`
+		IsMalicious     bool     `json:"is_malicious"`
+		Reasoning       string   `json:"reasoning"`
+		Categories      []string `json:"categories"`
+		Indicators      []string `json:"indicators"`
+		Recommendations []string `json:"recommendations"`
+	}
+
+	if err := json.Unmarshal([]byte(response), &aiResponse); err != nil {
+		// ASSUMPTION: If JSON parsing fails, try to extract key information with text parsing
+		return parseAITextResponse(response, domain, requestID, "domain")
+	}
+
+	return &AIAnalysisResult{
+		RequestID:       requestID,
+		Type:            "domain",
+		Target:          domain,
+		ThreatScore:     aiResponse.ThreatScore,
+		Confidence:      aiResponse.Confidence,
+		IsMalicious:     aiResponse.IsMalicious,
+		IsAnomaly:       false,
+		Reasoning:       aiResponse.Reasoning,
+		Categories:      aiResponse.Categories,
+		Indicators:      aiResponse.Indicators,
+		Recommendations: aiResponse.Recommendations,
+		Provider:        aiConfig.Provider,
+		Model:           aiConfig.Model,
+		Timestamp:       time.Now(),
+	}, nil
+}
+
+// analyzeTrafficPatternWithAI performs AI-powered traffic pattern analysis
+func analyzeTrafficPatternWithAI(request *AIAnalysisRequest, requestID string) (*AIAnalysisResult, error) {
+	// ASSUMPTION: Extract traffic pattern data from request context
+	recentDomains := strings.Join(request.RecentDomains, ", ")
+	
+	prompt := fmt.Sprintf(`Analyze this DNS traffic pattern for potential security threats:
+
+Client IP: %s
+Recent domains accessed: %s
+Request timing patterns: %v
+Request volume patterns: %v
+
+Please evaluate for:
+1. C2 beaconing behavior
+2. Data exfiltration patterns
+3. Malware communication
+4. Abnormal DNS tunneling
+5. DGA-generated domain usage
+6. Suspicious temporal patterns
+
+Respond with a JSON object containing:
+{
+  "threat_score": 0.0-1.0,
+  "confidence": 0.0-1.0,
+  "is_anomaly": boolean,
+  "reasoning": "detailed explanation",
+  "categories": ["category1", "category2"],
+  "indicators": ["indicator1", "indicator2"],
+  "recommendations": ["action1", "action2"]
+}`, request.ClientIP, recentDomains, request.TimeIntervals, request.RequestCounts)
+
+	response, err := callAI(prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	var aiResponse struct {
+		ThreatScore     float64  `json:"threat_score"`
+		Confidence      float64  `json:"confidence"`
+		IsAnomaly       bool     `json:"is_anomaly"`
+		Reasoning       string   `json:"reasoning"`
+		Categories      []string `json:"categories"`
+		Indicators      []string `json:"indicators"`
+		Recommendations []string `json:"recommendations"`
+	}
+
+	if err := json.Unmarshal([]byte(response), &aiResponse); err != nil {
+		return parseAITextResponse(response, request.Target, requestID, "traffic_pattern")
+	}
+
+	return &AIAnalysisResult{
+		RequestID:       requestID,
+		Type:            "traffic_pattern",
+		Target:          request.Target,
+		ThreatScore:     aiResponse.ThreatScore,
+		Confidence:      aiResponse.Confidence,
+		IsMalicious:     aiResponse.ThreatScore > aiConfig.ConfidenceThreshold,
+		IsAnomaly:       aiResponse.IsAnomaly,
+		Reasoning:       aiResponse.Reasoning,
+		Categories:      aiResponse.Categories,
+		Indicators:      aiResponse.Indicators,
+		Recommendations: aiResponse.Recommendations,
+		Provider:        aiConfig.Provider,
+		Model:           aiConfig.Model,
+		Timestamp:       time.Now(),
+	}, nil
+}
+
+// analyzeAnomalyWithAI performs AI-powered anomaly analysis
+func analyzeAnomalyWithAI(request *AIAnalysisRequest, requestID string) (*AIAnalysisResult, error) {
+	// ASSUMPTION: Generic anomaly analysis for various types of unusual patterns
+	contextStr, _ := json.Marshal(request.Context)
+	
+	prompt := fmt.Sprintf(`Analyze this network anomaly for potential security implications:
+
+Target: %s
+Context: %s
+Client: %s
+
+Please evaluate whether this represents:
+1. Normal network behavior variation
+2. Potential security incident
+3. System misconfiguration
+4. Attack in progress
+5. Data exfiltration attempt
+6. Malware activity
+
+Respond with a JSON object containing:
+{
+  "threat_score": 0.0-1.0,
+  "confidence": 0.0-1.0,
+  "is_anomaly": boolean,
+  "reasoning": "detailed explanation",
+  "categories": ["category1", "category2"],
+  "indicators": ["indicator1", "indicator2"],
+  "recommendations": ["action1", "action2"]
+}`, request.Target, contextStr, request.ClientIP)
+
+	response, err := callAI(prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	var aiResponse struct {
+		ThreatScore     float64  `json:"threat_score"`
+		Confidence      float64  `json:"confidence"`
+		IsAnomaly       bool     `json:"is_anomaly"`
+		Reasoning       string   `json:"reasoning"`
+		Categories      []string `json:"categories"`
+		Indicators      []string `json:"indicators"`
+		Recommendations []string `json:"recommendations"`
+	}
+
+	if err := json.Unmarshal([]byte(response), &aiResponse); err != nil {
+		return parseAITextResponse(response, request.Target, requestID, "anomaly")
+	}
+
+	return &AIAnalysisResult{
+		RequestID:       requestID,
+		Type:            "anomaly",
+		Target:          request.Target,
+		ThreatScore:     aiResponse.ThreatScore,
+		Confidence:      aiResponse.Confidence,
+		IsMalicious:     aiResponse.ThreatScore > aiConfig.ConfidenceThreshold,
+		IsAnomaly:       aiResponse.IsAnomaly,
+		Reasoning:       aiResponse.Reasoning,
+		Categories:      aiResponse.Categories,
+		Indicators:      aiResponse.Indicators,
+		Recommendations: aiResponse.Recommendations,
+		Provider:        aiConfig.Provider,
+		Model:           aiConfig.Model,
+		Timestamp:       time.Now(),
+	}, nil
+}
+
+// AI Helper Functions :D
+
+// callAI makes API calls to the configured AI provider
+func callAI(prompt string) (string, error) {
+	if aiConfig == nil || !aiConfig.Enabled {
+		return "", fmt.Errorf("AI is not enabled")
+	}
+
+	// ASSUMPTION: Different providers have different API formats
+	switch aiConfig.Provider {
+	case "openai":
+		return callOpenAI(prompt)
+	case "claude":
+		return callClaude(prompt)
+	case "local":
+		return callLocalAI(prompt)
+	default:
+		return "", fmt.Errorf("unsupported AI provider: %s", aiConfig.Provider)
+	}
+}
+
+// callOpenAI makes API calls to OpenAI
+func callOpenAI(prompt string) (string, error) {
+	// ASSUMPTION: Use OpenAI's chat completions API
+	requestBody := map[string]interface{}{
+		"model": aiConfig.Model,
+		"messages": []map[string]string{
+			{
+				"role":    "system",
+				"content": "You are a cybersecurity expert analyzing network traffic and domains for threats. Always respond with valid JSON when requested.",
+			},
+			{
+				"role":    "user",
+				"content": prompt,
+			},
+		},
+		"max_tokens":  1000,
+		"temperature": 0.1, // Low temperature for consistent, factual responses
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", err
+	}
+
+	client := &http.Client{Timeout: time.Duration(aiConfig.Timeout) * time.Second}
+	
+	req, err := http.NewRequest("POST", aiConfig.BaseURL+"/chat/completions", strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+aiConfig.APIKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", err
+	}
+
+	if response.Error.Message != "" {
+		return "", fmt.Errorf("OpenAI API error: %s", response.Error.Message)
+	}
+
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("no response from OpenAI")
+	}
+
+	return response.Choices[0].Message.Content, nil
+}
+
+// callClaude makes API calls to Anthropic Claude
+func callClaude(prompt string) (string, error) {
+	// ASSUMPTION: Use Claude's messages API
+	requestBody := map[string]interface{}{
+		"model":      aiConfig.Model,
+		"max_tokens": 1000,
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": prompt,
+			},
+		},
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", err
+	}
+
+	client := &http.Client{Timeout: time.Duration(aiConfig.Timeout) * time.Second}
+	
+	req, err := http.NewRequest("POST", aiConfig.BaseURL+"/v1/messages", strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", aiConfig.APIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var response struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", err
+	}
+
+	if response.Error.Message != "" {
+		return "", fmt.Errorf("Claude API error: %s", response.Error.Message)
+	}
+
+	if len(response.Content) == 0 {
+		return "", fmt.Errorf("no response from Claude")
+	}
+
+	return response.Content[0].Text, nil
+}
+
+// callLocalAI makes API calls to local AI models
+func callLocalAI(prompt string) (string, error) {
+	// ASSUMPTION: Local AI API follows a simple prompt-response format
+	requestBody := map[string]interface{}{
+		"model":       aiConfig.Model,
+		"prompt":      prompt,
+		"max_tokens":  1000,
+		"temperature": 0.1,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", err
+	}
+
+	client := &http.Client{Timeout: time.Duration(aiConfig.Timeout) * time.Second}
+	
+	req, err := http.NewRequest("POST", aiConfig.BaseURL+"/v1/completions", strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var response struct {
+		Choices []struct {
+			Text string `json:"text"`
+		} `json:"choices"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", err
+	}
+
+	if response.Error.Message != "" {
+		return "", fmt.Errorf("Local AI API error: %s", response.Error.Message)
+	}
+
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("no response from local AI")
+	}
+
+	return response.Choices[0].Text, nil
+}
+
+// generateRequestID generates a unique request ID for AI analysis
+func generateRequestID() string {
+	// ASSUMPTION: Use timestamp + random suffix for unique IDs
+	return fmt.Sprintf("ai_%d_%d", time.Now().UnixNano(), time.Now().Nanosecond()%10000)
+}
+
+// parseAITextResponse attempts to parse AI response when JSON parsing fails
+func parseAITextResponse(response, target, requestID, analysisType string) (*AIAnalysisResult, error) {
+	// ASSUMPTION: Try to extract key information from free-form text response
+	result := &AIAnalysisResult{
+		RequestID:       requestID,
+		Type:            analysisType,
+		Target:          target,
+		ThreatScore:     0.5, // Default neutral score
+		Confidence:      0.3, // Low confidence for text parsing
+		IsMalicious:     false,
+		IsAnomaly:       false,
+		Reasoning:       response, // Use full response as reasoning
+		Categories:      []string{},
+		Indicators:      []string{},
+		Recommendations: []string{},
+		Provider:        aiConfig.Provider,
+		Model:           aiConfig.Model,
+		Timestamp:       time.Now(),
+	}
+
+	// QUESTION: Should we implement more sophisticated text parsing?
+	// ASSUMPTION: Basic keyword-based threat detection for fallback parsing
+	responseLower := strings.ToLower(response)
+	
+	// Look for threat indicators in the response
+	threatenWords := []string{"malicious", "dangerous", "threat", "attack", "malware", "phishing", "suspicious"}
+	safeWords := []string{"safe", "legitimate", "normal", "benign", "clean"}
+	
+	threatCount := 0
+	safeCount := 0
+	
+	for _, word := range threatenWords {
+		if strings.Contains(responseLower, word) {
+			threatCount++
+		}
+	}
+	
+	for _, word := range safeWords {
+		if strings.Contains(responseLower, word) {
+			safeCount++
+		}
+	}
+	
+	// Adjust threat score based on keyword analysis
+	if threatCount > safeCount {
+		result.ThreatScore = 0.7
+		result.IsMalicious = true
+		result.Categories = []string{"text_analysis_threat"}
+	} else if safeCount > threatCount {
+		result.ThreatScore = 0.3
+		result.Categories = []string{"text_analysis_safe"}
+	}
+
+	return result, nil
+}
+
+// AI Background Monitoring Functions :D
+
+// trafficAnomalyDetector runs in background to detect traffic anomalies
+func trafficAnomalyDetector() {
+	if aiConfig == nil || !aiConfig.Enabled || !aiConfig.TrafficAnomaly {
+		return
+	}
+
+	log.Printf("Starting AI traffic anomaly detector")
+	
+	// ASSUMPTION: Run anomaly detection every analysis window
+	ticker := time.NewTicker(time.Duration(aiConfig.AnalysisWindow) * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		// ASSUMPTION: Analyze traffic patterns for all active clients
+		for clientIP, pattern := range trafficPatterns {
+			if time.Since(pattern.WindowEnd) < time.Duration(aiConfig.AnalysisWindow)*time.Minute {
+				// Pattern is recent, analyze it
+				request := &AIAnalysisRequest{
+					Type:            "traffic_pattern",
+					Target:          clientIP,
+					ClientIP:        clientIP,
+					Context:         map[string]interface{}{
+						"pattern": pattern,
+					},
+					Timestamp:       time.Now(),
+				}
+
+				result := analyzeWithAI(request, nil)
+				if result.IsAnomaly && result.Confidence > aiConfig.ConfidenceThreshold {
+					log.Printf("AI ANOMALY DETECTED: Client %s - %s (confidence: %.2f)", clientIP, result.Reasoning, result.Confidence)
+					
+					// QUESTION: Should we take automated action on anomalies?
+					// ASSUMPTION: Log for now, but could trigger alerts or blocking
+					for _, recommendation := range result.Recommendations {
+						log.Printf("AI RECOMMENDATION for %s: %s", clientIP, recommendation)
+					}
+				}
+			}
+		}
+	}
+}
+
+// threatHuntingEngine runs in background for proactive threat hunting
+func threatHuntingEngine() {
+	if aiConfig == nil || !aiConfig.Enabled || !aiConfig.ThreatHunting {
+		return
+	}
+
+	log.Printf("Starting AI threat hunting engine")
+	
+	// ASSUMPTION: Run threat hunting every 30 minutes
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		// ASSUMPTION: Hunt for threats across all recent traffic patterns
+		huntThreats()
+	}
+}
+
+// huntThreats performs proactive threat hunting using AI
+func huntThreats() {
+	// ASSUMPTION: Collect recent domains and patterns for analysis
+	var recentDomains []string
+	var suspiciousPatterns []string
+	
+	for _, pattern := range trafficPatterns {
+		if time.Since(pattern.WindowEnd) < time.Hour {
+			recentDomains = append(recentDomains, pattern.NewDomains...)
+			
+			// ASSUMPTION: Flag patterns with high beaconing or exfiltration scores
+			if pattern.BeaconingScore > 0.7 || pattern.ExfiltrationScore > 0.7 {
+				suspiciousPatterns = append(suspiciousPatterns, fmt.Sprintf("Client %s: beaconing=%.2f, exfiltration=%.2f",
+					pattern.ClientIP, pattern.BeaconingScore, pattern.ExfiltrationScore))
+			}
+		}
+	}
+
+	if len(recentDomains) == 0 && len(suspiciousPatterns) == 0 {
+		return // Nothing to hunt
+	}
+
+	// ASSUMPTION: Use AI to analyze collected data for threats
+	request := &AIAnalysisRequest{
+		Type:   "threat_hunting",
+		Target: "network_analysis",
+		Context: map[string]interface{}{
+			"recent_domains":       recentDomains,
+			"suspicious_patterns":  suspiciousPatterns,
+			"analysis_time":        time.Now(),
+		},
+		Timestamp: time.Now(),
+	}
+
+	result := analyzeWithAI(request, nil)
+	if result.ThreatScore > aiConfig.ConfidenceThreshold {
+		log.Printf("AI THREAT HUNTING ALERT: %s (threat_score: %.2f, confidence: %.2f)", 
+			result.Reasoning, result.ThreatScore, result.Confidence)
+		
+		for _, indicator := range result.Indicators {
+			log.Printf("AI THREAT INDICATOR: %s", indicator)
+		}
+	}
+}
+
+// updateTrafficPattern updates traffic patterns for AI analysis
+func updateTrafficPattern(clientIP, domain, resolvedIP string) {
+	if trafficPatterns == nil {
+		trafficPatterns = make(map[string]*AITrafficPattern)
+	}
+
+	now := time.Now()
+	
+	// Get or create traffic pattern for this client
+	pattern, exists := trafficPatterns[clientIP]
+	if !exists || time.Since(pattern.WindowEnd) > time.Duration(aiConfig.AnalysisWindow)*time.Minute {
+		// Create new pattern window
+		pattern = &AITrafficPattern{
+			ClientIP:       clientIP,
+			WindowStart:    now,
+			WindowEnd:      now.Add(time.Duration(aiConfig.AnalysisWindow) * time.Minute),
+			TopDomains:     []string{},
+			NewDomains:     []string{},
+			SuspiciousDomains: []string{},
+			DGALikeDomains: []string{},
+		}
+		trafficPatterns[clientIP] = pattern
+	}
+
+	// Update pattern metrics
+	pattern.TotalRequests++
+	pattern.WindowEnd = now.Add(time.Duration(aiConfig.AnalysisWindow) * time.Minute)
+
+	// Track unique domains
+	domainSeen := false
+	for _, d := range pattern.TopDomains {
+		if d == domain {
+			domainSeen = true
+			break
+		}
+	}
+	if !domainSeen {
+		pattern.UniqueDomains++
+		pattern.TopDomains = append(pattern.TopDomains, domain)
+		
+		// ASSUMPTION: Consider domain "new" if not seen in previous patterns
+		isNewDomain := true
+		// QUESTION: Should we check historical data in Redis for "new" domains?
+		// ASSUMPTION: For now, just track within current window
+		if isNewDomain {
+			pattern.NewDomains = append(pattern.NewDomains, domain)
+		}
+	}
+
+	// ASSUMPTION: Simple heuristics for suspicious domain detection
+	domainLower := strings.ToLower(domain)
+	
+	// Check for DGA-like characteristics
+	if isDGALike(domainLower) {
+		pattern.DGALikeDomains = append(pattern.DGALikeDomains, domain)
+		pattern.SuspiciousDomains = append(pattern.SuspiciousDomains, domain)
+	}
+
+	// Calculate request rate (requests per minute)
+	windowDuration := time.Since(pattern.WindowStart).Minutes()
+	if windowDuration > 0 {
+		pattern.RequestRate = float64(pattern.TotalRequests) / windowDuration
+	}
+
+	// ASSUMPTION: Simple beaconing detection based on regularity
+	// QUESTION: Should we implement more sophisticated beaconing detection?
+	if pattern.TotalRequests > 10 && pattern.UniqueDomains < 3 {
+		pattern.BeaconingScore = 0.8 // High likelihood of beaconing
+	} else if pattern.RequestRate > 60 { // More than 1 request per second
+		pattern.BeaconingScore = 0.6
+	} else {
+		pattern.BeaconingScore = 0.2
+	}
+
+	// ASSUMPTION: Simple exfiltration detection based on volume and diversity
+	if pattern.UniqueDomains > 50 && pattern.RequestRate > 30 {
+		pattern.ExfiltrationScore = 0.7 // High likelihood of exfiltration
+	} else if pattern.UniqueDomains > 20 {
+		pattern.ExfiltrationScore = 0.4
+	} else {
+		pattern.ExfiltrationScore = 0.1
+	}
+
+	// ASSUMPTION: Calculate burstiness (how clustered requests are in time)
+	// For now, use a simple approximation
+	if pattern.RequestRate > 100 {
+		pattern.Burstiness = 0.9
+	} else if pattern.RequestRate > 30 {
+		pattern.Burstiness = 0.6
+	} else {
+		pattern.Burstiness = 0.3
+	}
+}
+
+// isDGALike checks if a domain resembles Domain Generation Algorithm output
+func isDGALike(domain string) bool {
+	// ASSUMPTION: Simple heuristics for DGA detection
+	// QUESTION: Should we use more sophisticated ML-based DGA detection?
+	
+	// Remove TLD for analysis
+	parts := strings.Split(domain, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	
+	subdomain := parts[0]
+	
+	// Check for DGA characteristics
+	if len(subdomain) < 6 {
+		return false // Too short to be typical DGA
+	}
+	
+	// Count vowels vs consonants ratio
+	vowels := 0
+	consonants := 0
+	digits := 0
+	
+	for _, char := range subdomain {
+		if char >= '0' && char <= '9' {
+			digits++
+		} else if strings.ContainsRune("aeiou", char) {
+			vowels++
+		} else if char >= 'a' && char <= 'z' {
+			consonants++
+		}
+	}
+	
+	total := vowels + consonants + digits
+	if total == 0 {
+		return false
+	}
+	
+	vowelRatio := float64(vowels) / float64(total)
+	digitRatio := float64(digits) / float64(total)
+	
+	// ASSUMPTION: DGA domains typically have low vowel ratio and/or high digit ratio
+	if vowelRatio < 0.2 || digitRatio > 0.3 {
+		return true
+	}
+	
+	// Check for long strings without common patterns
+	if len(subdomain) > 12 && vowelRatio < 0.3 {
+		return true
+	}
+	
+	return false
 }
 
 // initializeReputationSystem initializes the reputation checking system
@@ -1215,6 +2212,23 @@ func Register(rt Route) error {
 		log.Printf("REPUTATION_CONFIG env var not set, reputation checking disabled")
 	}
 
+	// AI_CONFIG: JSON configuration file for AI-powered threat detection :D
+	aiConfigPath := os.Getenv("AI_CONFIG")
+	if aiConfigPath != "" {
+		config, err := loadAIConfiguration(aiConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load AI configuration: %v", err)
+		}
+		aiConfig = config
+		
+		// Initialize AI system
+		initializeAISystem()
+		
+		log.Printf("AI_CONFIG loaded from %s: provider=%s, model=%s", aiConfigPath, aiConfig.Provider, aiConfig.Model)
+	} else {
+		log.Printf("AI_CONFIG env var not set, AI features disabled")
+	}
+
 	opt, err := redis.ParseURL(redisEnv)
 	if err != nil {
 		panic(err)
@@ -1373,6 +2387,32 @@ func Register(rt Route) error {
 				} else if os.Getenv("DEBUG") != "" {
 					log.Printf("REPUTATION OK: Domain %s clean (score: %.2f, provider: %s)", 
 						requestedDomain, reputationResult.Score, reputationResult.Provider)
+				}
+			}
+			
+			// FEATURE: AI-powered domain analysis :D
+			if aiConfig != nil && aiConfig.Enabled && aiConfig.DomainAnalysis {
+				aiRequest := &AIAnalysisRequest{
+					Type:      "domain",
+					Target:    requestedDomain,
+					ClientIP:  from,
+					Timestamp: time.Now(),
+				}
+				
+				aiResult := analyzeWithAI(aiRequest, redisClient)
+				if aiResult.IsMalicious && aiResult.Confidence > aiConfig.ConfidenceThreshold {
+					log.Printf("AI BLOCK: Domain %s requested by %s flagged as malicious by AI (threat_score: %.2f, confidence: %.2f, reasoning: %s)", 
+						requestedDomain, from, aiResult.ThreatScore, aiResult.Confidence, aiResult.Reasoning)
+					
+					// ASSUMPTION: Block AI-detected malicious domains by returning NXDOMAIN
+					m := new(dns.Msg)
+					m.SetReply(r)
+					m.SetRcode(r, dns.RcodeNameError) // NXDOMAIN
+					w.WriteMsg(m)
+					return
+				} else if os.Getenv("DEBUG") != "" {
+					log.Printf("AI OK: Domain %s clean according to AI (threat_score: %.2f, confidence: %.2f)", 
+						requestedDomain, aiResult.ThreatScore, aiResult.Confidence)
 				}
 			}
 		}
@@ -1584,6 +2624,11 @@ func Register(rt Route) error {
 				}
 				
 				key := "rules:" + from + ":" + targetIP.String() + ":" + domain
+				
+				// FEATURE: AI-powered traffic pattern collection :D
+				if aiConfig != nil && aiConfig.Enabled && aiConfig.TrafficAnomaly {
+					updateTrafficPattern(from, domain, targetIP.String())
+				}
 				
 				// Sanitize environment variables to prevent injection  
 				sanitizedClientIP := sanitizeForShell(from)
