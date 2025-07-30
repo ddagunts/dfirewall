@@ -34,7 +34,7 @@ services:
       #- "PORT=53"
       - "UPSTREAM=1.1.1.1:53"
       - "REDIS=redis://127.0.0.1:6379"
-      #- "ENABLE_EDNS=1" # needs fixing
+      #- "ENABLE_EDNS=1" # Enable EDNS Client Subnet (now fixed with IPv4/IPv6 support)
       #- "DEBUG=1"
       - "INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh"
       - "INVOKE_ALWAYS=1"

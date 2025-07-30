@@ -20,7 +20,7 @@ PORT=                        # listening port
 UPSTREAM=8.8.8.8:53          # upstream DNS resolver host and port (REQUIRED)
 REDIS=redis://127.0.0.1:6379 # location of Redis (REQUIRED)
 INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec when it encounters a new IP address
-ENABLE_EDNS=                 # set to any value to enable adding requesting client IP to EDNS record (broken at this time)
+ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6)
 DEBUG=                       # set to any value to enable verbose logging
 INVOKE_ALWAYS=               # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered, even if already present in Redis
 ```
@@ -266,7 +266,7 @@ COMMIT
 As configured above, the firewall doesn't reject traffic from a client **until** at least one DNS request is made by the client.
 
 # ToDo
-- fix EDNS handling
+- ~~fix EDNS handling~~ ✅ **Completed** - Fixed EDNS Client Subnet with IPv4/IPv6 support and proper validation
 - ~~add support for handling all IPs in a response (rather than selecting first IP only)~~ ✅ **Completed** - Added `HANDLE_ALL_IPS` environment variable option
 - ~~add AAAA records (IPv6 support)~~ ✅ **Completed** - Added AAAA record processing for IPv6 addresses
 - add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)

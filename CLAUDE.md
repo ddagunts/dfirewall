@@ -53,7 +53,7 @@ Optional:
 - `INVOKE_SCRIPT`: Path to executable script for firewall management
 - `INVOKE_ALWAYS`: Execute script for every IP encounter (not just new ones)
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
-- `ENABLE_EDNS`: Enable EDNS client subnet (currently broken)
+- `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support
 - `DEBUG`: Enable verbose logging
 
 ### Dependencies

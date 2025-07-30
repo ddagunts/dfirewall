@@ -166,26 +166,65 @@ func Register(rt Route) error {
 		}
 		//dnsClient := &dns.Client{Net: "udp"}
 
-		// Set EDNS so that Pi-hole (or whatever upstream) receives the real client IP
-		// If you already have EDNS records added, you can set environmental variable
-		// DISABLE_EDNS to any value to disable this.
-		// Don't enable!!, this currently breaks many requests
+		// Set EDNS Client Subnet so that upstream DNS servers receive the real client IP
+		// This enables location-aware responses and proper geo-blocking by upstream servers
 		if ednsAdd != "" {
-			o := new(dns.OPT)
-			o.Hdr.Name = "."
-			o.Hdr.Rrtype = dns.TypeOPT
-			e := new(dns.EDNS0_SUBNET)
-			e.Code = dns.EDNS0SUBNET
-			e.Family = 1         // 1 for IPv4 source address, 2 for IPv6
-			e.SourceNetmask = 32 // 32 for IPV4, 128 for IPv6
-			e.SourceScope = 0
-			e.Address = net.ParseIP(from).To4() // for IPv4
-			// e.Address = net.ParseIP("2001:7b8:32a::2") // for IPV6
-			o.Option = append(o.Option, e)
-			if os.Getenv("DEBUG") != "" {
-				log.Printf("EDNS in Request %s:\n", r.Extra)
+			// Parse and validate the client IP address
+			clientIP := net.ParseIP(from)
+			if clientIP == nil {
+				// ASSUMPTION: If client IP is invalid, log and skip EDNS to avoid breaking the request
+				log.Printf("WARNING: Invalid client IP '%s' for EDNS, skipping EDNS processing", from)
+			} else {
+				// Check if request already has EDNS OPT records to avoid duplicates
+				hasExistingOPT := false
+				for _, rr := range r.Extra {
+					if rr.Header().Rrtype == dns.TypeOPT {
+						hasExistingOPT = true
+						break
+					}
+				}
+				
+				if !hasExistingOPT {
+					// Create properly formed OPT record with EDNS Client Subnet
+					o := new(dns.OPT)
+					o.Hdr.Name = "."
+					o.Hdr.Rrtype = dns.TypeOPT
+					o.SetUDPSize(4096) // Set appropriate buffer size for EDNS
+					
+					// Create EDNS Client Subnet option
+					e := new(dns.EDNS0_SUBNET)
+					e.Code = dns.EDNS0SUBNET
+					e.SourceScope = 0 // Always 0 for queries
+					
+					// ASSUMPTION: Determine IPv4 vs IPv6 and set appropriate family/netmask
+					// IPv4 addresses get family=1, netmask=32
+					// IPv6 addresses get family=2, netmask=128
+					if clientIP.To4() != nil {
+						// IPv4 address
+						e.Family = 1
+						e.SourceNetmask = 32
+						e.Address = clientIP.To4()
+					} else {
+						// IPv6 address  
+						e.Family = 2
+						e.SourceNetmask = 128
+						e.Address = clientIP.To16()
+					}
+					
+					o.Option = append(o.Option, e)
+					r.Extra = append(r.Extra, o)
+					
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Added EDNS Client Subnet for %s (family=%d, netmask=%d)", from, e.Family, e.SourceNetmask)
+					}
+				} else {
+					// QUESTION: Should we modify existing OPT record or leave it alone?
+					// ASSUMPTION: Leave existing OPT records untouched to avoid conflicts
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Request already has EDNS OPT record, skipping EDNS Client Subnet addition")
+					}
+				}
 			}
-			r.Extra = append(r.Extra, o)
 		}
 		dnsClient := &dns.Client{Net: "udp"}
 		a, _, err := dnsClient.Exchange(r, upstream)
