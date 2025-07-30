@@ -263,7 +263,7 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 # ToDo
 - fix EDNS handling
 - ~~add support for handling all IPs in a response (rather than selecting first IP only)~~ ✅ **Completed** - Added `HANDLE_ALL_IPS` environment variable option
-- add AAAA records (IPv6 support)
+- ~~add AAAA records (IPv6 support)~~ ✅ **Completed** - Added AAAA record processing for IPv6 addresses
 - add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)
 - add UI for viewing rules
 - add better configuration options (invoke custom script(s) per client (if exist), etc)

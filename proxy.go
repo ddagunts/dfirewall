@@ -209,15 +209,33 @@ func Register(rt Route) error {
 		var loStart, _ = netip.ParseAddr("127.0.0.0")
 		var loEnd, _ = netip.ParseAddr("127.255.255.255")
 		var openRange, _ = netip.ParseAddr("0.0.0.0")
+		// IPv6 localhost and open range addresses
+		var loV6, _ = netip.ParseAddr("::1")        // IPv6 localhost
+		var openRangeV6, _ = netip.ParseAddr("::")   // IPv6 unspecified address
 		var padTtl uint32 = 0
 
-		var recordA bool = false
+		var foundAddressRecords bool = false // true if A or AAAA records found
 		var ipAddresses []netip.Addr // collect all IP addresses when HANDLE_ALL_IPS is set
 		var firstIPIndex int = -1
 		
 		for i := range numAnswers {
+			var currentIP netip.Addr
+			var isAddressRecord bool = false
+			
+			// Handle A records (IPv4)
 			if arec, ok := a.Answer[i].(*dns.A); ok {
-				recordA = true
+				foundAddressRecords = true
+				isAddressRecord = true
+				currentIP, _ = netip.ParseAddr(arec.A.String())
+			}
+			// Handle AAAA records (IPv6)  
+			if aaaarec, ok := a.Answer[i].(*dns.AAAA); ok {
+				foundAddressRecords = true
+				isAddressRecord = true
+				currentIP, _ = netip.ParseAddr(aaaarec.AAAA.String())
+			}
+			
+			if isAddressRecord {
 				// padTtl is used in Redis TTL and in invoked scripts,
 				// while ttl is used in client response
 				ttl := a.Answer[i].Header().Ttl
@@ -237,8 +255,6 @@ func Register(rt Route) error {
 					padTtl = 3600
 					a.Answer[i].Header().Ttl = 3600 // to the client as well
 				}
-
-				currentIP, _ := netip.ParseAddr(arec.A.String())
 				
 				if handleAllIPs != "" {
 					// collect all IP addresses for processing
@@ -247,7 +263,7 @@ func Register(rt Route) error {
 						firstIPIndex = i
 					}
 				} else {
-					// original behavior: handle only first A record
+					// original behavior: handle only first address record
 					ipAddress = currentIP
 					A := a.Answer[0 : i+1]
 					a.Answer = A
@@ -269,7 +285,15 @@ func Register(rt Route) error {
 
 		// helper function to process individual IP addresses
 		processIP := func(targetIP netip.Addr) {
-			if !(inRange(loStart, loEnd, targetIP) || targetIP == openRange) {
+			// Check if IP is in localhost range (IPv4 or IPv6) or is open range
+			isLocalhost := false
+			if targetIP.Is4() {
+				isLocalhost = inRange(loStart, loEnd, targetIP) || targetIP == openRange
+			} else if targetIP.Is6() {
+				isLocalhost = targetIP == loV6 || targetIP == openRangeV6
+			}
+			
+			if !isLocalhost {
 				newTtl := time.Duration(padTtl) * time.Second
 				newTtlS := strconv.FormatFloat(newTtl.Seconds(), 'f', -1, 64)
 				domain := r.Question[0].Name
@@ -337,8 +361,8 @@ func Register(rt Route) error {
 			}
 		}
 
-		// only target A records
-		if recordA {
+		// only target A and AAAA records  
+		if foundAddressRecords {
 			if handleAllIPs != "" && len(ipAddresses) > 0 {
 				// process all collected IP addresses
 				for _, ip := range ipAddresses {

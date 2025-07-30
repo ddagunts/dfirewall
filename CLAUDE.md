@@ -20,6 +20,7 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 - Redis storage for tracking client IP → resolved IP → domain mappings with TTL expiration
 - Dynamic firewall rule creation via executable scripts
 - Support for both UDP and TCP DNS protocols
+- Support for both IPv4 (A records) and IPv6 (AAAA records)
 - Client IP detection and per-client rule management
 
 ## Development Commands
