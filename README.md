@@ -270,4 +270,4 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 - add support for checking IP and/or domain against blacklist in Redis (or file)
 - add support for checking IP and/or domain against common reputation checkers
 - add support for checking IP and/or domain by executing user-provided pass/fail script
-
+- AI integration :D
