@@ -18,7 +18,7 @@ services:
     container_name: dfirewall
     restart: "always"
     build: .
-    network_mode: host
+    network_mode: host  # Required for DNS interception, also exposes WEB_UI_PORT if enabled
     cap_add:
       - NET_ADMIN
     # Security hardening
@@ -38,6 +38,7 @@ services:
       #- "DEBUG=1"
       - "INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh"
       #- "EXPIRE_SCRIPT=/scripts/expire_generic.sh" # Enable for non-Linux/non-ipset platforms
+      #- "WEB_UI_PORT=8080" # Enable web UI for rule management
       - "INVOKE_ALWAYS=1"
     hostname: "dfirewall"
     image: "dfirewall:latest"

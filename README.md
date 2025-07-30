@@ -21,6 +21,7 @@ UPSTREAM=8.8.8.8:53          # upstream DNS resolver host and port (REQUIRED)
 REDIS=redis://127.0.0.1:6379 # location of Redis (REQUIRED)
 INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec when it encounters a new IP address
 EXPIRE_SCRIPT=               # path of an executable for "dfirewall" to exec when Redis keys expire (enables non-Linux/non-ipset support)
+WEB_UI_PORT=                 # port for web-based rule management interface (e.g., 8080)
 ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6)
 DEBUG=                       # set to any value to enable verbose logging
 INVOKE_ALWAYS=               # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered, even if already present in Redis
@@ -204,6 +205,25 @@ When enabled, dfirewall will:
 ```bash
 redis-cli CONFIG SET notify-keyspace-events Ex
 ```
+
+## Web UI for Rule Management
+
+dfirewall includes a built-in web interface for viewing and managing firewall rules. Enable it by setting the `WEB_UI_PORT` environment variable:
+
+```bash
+# Enable web UI on port 8080
+WEB_UI_PORT=8080
+```
+
+Once enabled, access the web interface at `http://localhost:8080` (or your server's IP). The web UI provides:
+
+- **Real-time Statistics**: View total rules, active clients, unique domains, and IPs
+- **Rule Listing**: See all active firewall rules with TTL and expiration times
+- **Rule Management**: Delete individual rules manually
+- **Auto-refresh**: Interface updates every 30 seconds automatically
+
+**Security Note**: The web UI is intended for internal use only. It runs on HTTP and should not be exposed to untrusted networks.
+
 You should see ipsets on the host being populated by the container.  Note that the second Signal IP (172.253.122.121) had a low TTL of 31s and expired out of the list already
 ```
 # ipset list
@@ -293,7 +313,7 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 - ~~add support for handling all IPs in a response (rather than selecting first IP only)~~ ✅ **Completed** - Added `HANDLE_ALL_IPS` environment variable option
 - ~~add AAAA records (IPv6 support)~~ ✅ **Completed** - Added AAAA record processing for IPv6 addresses
 - ~~add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)~~ ✅ **Completed** - Added `EXPIRE_SCRIPT` with Redis keyspace notifications monitoring
-- add UI for viewing rules
+- ~~add UI for viewing rules~~ ✅ **Completed** - Added web-based UI with rule viewing, statistics, and management features
 - add better configuration options (invoke custom script(s) per client (if exist), etc)
 - add support for checking IP and/or domain against blacklist in Redis (or file)
 - add support for checking IP and/or domain against common reputation checkers

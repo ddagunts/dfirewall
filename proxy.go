@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +25,25 @@ type Route struct {
 	Zone string
 	From net.IP
 	To   net.IP
+}
+
+// FirewallRule represents a single firewall rule from Redis
+type FirewallRule struct {
+	Key        string    `json:"key"`
+	ClientIP   string    `json:"client_ip"`
+	ResolvedIP string    `json:"resolved_ip"`
+	Domain     string    `json:"domain"`
+	TTL        int64     `json:"ttl"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// UIStats represents statistics for the web UI
+type UIStats struct {
+	TotalRules    int `json:"total_rules"`
+	ActiveClients int `json:"active_clients"`
+	UniqueDomains int `json:"unique_domains"`
+	UniqueIPs     int `json:"unique_ips"`
 }
 
 // Input validation functions
@@ -131,6 +153,18 @@ func Register(rt Route) error {
 		log.Printf("EXPIRE_SCRIPT is set to %s", expireScript)
 	}
 
+	// WEB_UI_PORT: Port for web UI server (for rule management and monitoring)
+	webUIPort := os.Getenv("WEB_UI_PORT")
+	if webUIPort == "" {
+		log.Printf("WEB_UI_PORT env var not set, web UI disabled")
+	} else {
+		// ASSUMPTION: Validate port range (1024-65535 for non-privileged)
+		if port, err := strconv.Atoi(webUIPort); err != nil || port < 1024 || port > 65535 {
+			log.Fatalf("Invalid WEB_UI_PORT: must be between 1024-65535, got: %s", webUIPort)
+		}
+		log.Printf("WEB_UI_PORT is set to %s", webUIPort)
+	}
+
 	opt, err := redis.ParseURL(redisEnv)
 	if err != nil {
 		panic(err)
@@ -225,6 +259,11 @@ func Register(rt Route) error {
 		}()
 	} else {
 		log.Printf("EXPIRE_SCRIPT not set, Redis key expiration monitoring disabled")
+	}
+
+	// Start web UI server if enabled
+	if webUIPort != "" {
+		go startWebUI(webUIPort, redisClient)
 	}
 
 	dns.HandleFunc(rt.Zone, func(w dns.ResponseWriter, r *dns.Msg) {
@@ -501,4 +540,342 @@ func Register(rt Route) error {
 		// dropping request
 	})
 	return nil
+}
+
+// startWebUI starts the web UI server for rule management
+func startWebUI(port string, redisClient *redis.Client) {
+	// ASSUMPTION: Web UI should be simple and lightweight, using built-in HTML templates
+	log.Printf("Starting web UI server on port %s", port)
+	
+	// Serve static content (CSS, JS) if needed
+	http.HandleFunc("/", handleUIHome)
+	http.HandleFunc("/api/rules", func(w http.ResponseWriter, r *http.Request) {
+		handleAPIRules(w, r, redisClient)
+	})
+	http.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+		handleAPIStats(w, r, redisClient)
+	})
+	http.HandleFunc("/api/rules/delete", func(w http.ResponseWriter, r *http.Request) {
+		handleAPIDeleteRule(w, r, redisClient)
+	})
+	
+	// QUESTION: Should we enable HTTPS? For now, using HTTP for simplicity
+	// ASSUMPTION: This is intended for internal/localhost use, so HTTP is acceptable
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: nil, // Use default ServeMux
+		// ASSUMPTION: Set reasonable timeouts to prevent resource exhaustion
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	
+	if err := server.ListenAndServe(); err != nil {
+		log.Printf("Web UI server failed: %v", err)
+	}
+}
+
+// handleUIHome serves the main HTML page
+func handleUIHome(w http.ResponseWriter, r *http.Request) {
+	// ASSUMPTION: Embed HTML template directly in code to avoid external file dependencies
+	htmlTemplate := `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>dfirewall - Rule Management</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #333; border-bottom: 2px solid #007acc; padding-bottom: 10px; }
+        .stats { display: flex; gap: 20px; margin: 20px 0; }
+        .stat-box { background: #007acc; color: white; padding: 15px; border-radius: 5px; flex: 1; text-align: center; }
+        .stat-box h3 { margin: 0; font-size: 24px; }
+        .stat-box p { margin: 5px 0 0 0; font-size: 14px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f2f2f2; font-weight: bold; }
+        tr:hover { background-color: #f9f9f9; }
+        .delete-btn { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
+        .delete-btn:hover { background: #c82333; }
+        .refresh-btn { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-bottom: 20px; }
+        .refresh-btn:hover { background: #218838; }
+        .loading { text-align: center; padding: 40px; color: #666; }
+        .error { color: #dc3545; text-align: center; padding: 20px; }
+        .domain { word-break: break-all; max-width: 200px; }
+        .ttl { font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>dfirewall - Firewall Rule Management</h1>
+        
+        <button class="refresh-btn" onclick="loadData()">🔄 Refresh Data</button>
+        
+        <div class="stats" id="stats">
+            <div class="stat-box">
+                <h3 id="totalRules">-</h3>
+                <p>Total Rules</p>
+            </div>
+            <div class="stat-box">
+                <h3 id="activeClients">-</h3>
+                <p>Active Clients</p>
+            </div>
+            <div class="stat-box">
+                <h3 id="uniqueDomains">-</h3>
+                <p>Unique Domains</p>
+            </div>
+            <div class="stat-box">
+                <h3 id="uniqueIPs">-</h3>
+                <p>Unique IPs</p>
+            </div>
+        </div>
+        
+        <div id="loading" class="loading">Loading firewall rules...</div>
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <table id="rulesTable" style="display: none;">
+            <thead>
+                <tr>
+                    <th>Client IP</th>
+                    <th>Resolved IP</th>
+                    <th>Domain</th>
+                    <th>TTL (seconds)</th>
+                    <th>Expires At</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="rulesBody">
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // ASSUMPTION: Use vanilla JavaScript to avoid external dependencies
+        async function loadData() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('rulesTable').style.display = 'none';
+            
+            try {
+                // Load statistics
+                const statsResponse = await fetch('/api/stats');
+                const stats = await statsResponse.json();
+                
+                document.getElementById('totalRules').textContent = stats.total_rules;
+                document.getElementById('activeClients').textContent = stats.active_clients;
+                document.getElementById('uniqueDomains').textContent = stats.unique_domains;
+                document.getElementById('uniqueIPs').textContent = stats.unique_ips;
+                
+                // Load rules
+                const rulesResponse = await fetch('/api/rules');
+                const rules = await rulesResponse.json();
+                
+                const tbody = document.getElementById('rulesBody');
+                tbody.innerHTML = '';
+                
+                rules.forEach(rule => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = ` + "`" + `
+                        <td>${rule.client_ip}</td>
+                        <td>${rule.resolved_ip}</td>
+                        <td class="domain">${rule.domain}</td>
+                        <td class="ttl">${rule.ttl}</td>
+                        <td>${new Date(rule.expires_at).toLocaleString()}</td>
+                        <td>
+                            <button class="delete-btn" onclick="deleteRule('${rule.key}')">Delete</button>
+                        </td>
+                    ` + "`" + `;
+                    tbody.appendChild(row);
+                });
+                
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('rulesTable').style.display = 'table';
+                
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'Error loading data: ' + error.message;
+            }
+        }
+        
+        async function deleteRule(key) {
+            if (!confirm('Are you sure you want to delete this rule?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/rules/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({key: key})
+                });
+                
+                if (response.ok) {
+                    loadData(); // Refresh the data
+                } else {
+                    alert('Error deleting rule');
+                }
+            } catch (error) {
+                alert('Error deleting rule: ' + error.message);
+            }
+        }
+        
+        // Load data on page load
+        window.onload = loadData;
+        
+        // Auto-refresh every 30 seconds
+        setInterval(loadData, 30000);
+    </script>
+</body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(htmlTemplate))
+}
+
+// handleAPIRules returns all firewall rules as JSON
+func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	ctx := context.Background()
+	
+	// ASSUMPTION: Get all keys matching our pattern "rules:*"
+	keys, err := redisClient.Keys(ctx, "rules:*").Result()
+	if err != nil {
+		http.Error(w, "Error fetching rules: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	var rules []FirewallRule
+	
+	for _, key := range keys {
+		// Parse key format: "rules:client:ip:domain"
+		parts := strings.Split(key, ":")
+		if len(parts) < 4 {
+			continue // Skip malformed keys
+		}
+		
+		clientIP := parts[1]
+		resolvedIP := parts[2]
+		domain := strings.Join(parts[3:], ":") // Domain might contain colons
+		
+		// Get TTL
+		ttl, err := redisClient.TTL(ctx, key).Result()
+		if err != nil {
+			ttl = -1 // Unknown TTL
+		}
+		
+		// ASSUMPTION: Calculate expiration time based on current time + TTL
+		expiresAt := time.Now().Add(ttl)
+		
+		// QUESTION: How to determine creation time? Not stored in Redis
+		// ASSUMPTION: Use current time minus original TTL as approximation
+		createdAt := time.Now().Add(-ttl)
+		if ttl < 0 {
+			createdAt = time.Now() // Fallback for persistent keys
+		}
+		
+		rule := FirewallRule{
+			Key:        key,
+			ClientIP:   clientIP,
+			ResolvedIP: resolvedIP,
+			Domain:     domain,
+			TTL:        int64(ttl.Seconds()),
+			ExpiresAt:  expiresAt,
+			CreatedAt:  createdAt,
+		}
+		
+		rules = append(rules, rule)
+	}
+	
+	// ASSUMPTION: Sort rules by expiration time (soonest first)
+	sort.Slice(rules, func(i, j int) bool {
+		return rules[i].ExpiresAt.Before(rules[j].ExpiresAt)
+	})
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rules)
+}
+
+// handleAPIStats returns statistics about the firewall rules
+func handleAPIStats(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	ctx := context.Background()
+	
+	keys, err := redisClient.Keys(ctx, "rules:*").Result()
+	if err != nil {
+		http.Error(w, "Error fetching stats: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	clientIPs := make(map[string]bool)
+	domains := make(map[string]bool)
+	resolvedIPs := make(map[string]bool)
+	
+	for _, key := range keys {
+		parts := strings.Split(key, ":")
+		if len(parts) < 4 {
+			continue
+		}
+		
+		clientIP := parts[1]
+		resolvedIP := parts[2]
+		domain := strings.Join(parts[3:], ":")
+		
+		clientIPs[clientIP] = true
+		resolvedIPs[resolvedIP] = true
+		domains[domain] = true
+	}
+	
+	stats := UIStats{
+		TotalRules:    len(keys),
+		ActiveClients: len(clientIPs),
+		UniqueDomains: len(domains),
+		UniqueIPs:     len(resolvedIPs),
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+// handleAPIDeleteRule deletes a specific firewall rule
+func handleAPIDeleteRule(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	var req struct {
+		Key string `json:"key"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	
+	// ASSUMPTION: Validate that the key follows our expected format for security
+	if !strings.HasPrefix(req.Key, "rules:") {
+		http.Error(w, "Invalid key format", http.StatusBadRequest)
+		return
+	}
+	
+	ctx := context.Background()
+	result, err := redisClient.Del(ctx, req.Key).Result()
+	if err != nil {
+		http.Error(w, "Error deleting rule: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	if result == 0 {
+		http.Error(w, "Rule not found", http.StatusNotFound)
+		return
+	}
+	
+	log.Printf("Manually deleted rule: %s", req.Key)
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
