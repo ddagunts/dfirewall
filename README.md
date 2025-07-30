@@ -160,7 +160,7 @@ Now your Debian machine should be a router
 ```
 
 # Testing
-Connect a client to the LAN, (clean DNS cache on the client completely), open some app to generate network traffic.  You should see some logs from dfirewall container.
+Connect a **new** client to the LAN, (or otherwise ensure clean DNS cache on the client), open some app to generate network traffic.  You should see some logs from dfirewall container.
 ```
 root@debian:~/dfirewall# docker-compose logs --tail 5 dfirewall
 Attaching to dfirewall
