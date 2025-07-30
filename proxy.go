@@ -81,6 +81,30 @@ type ScriptConfiguration struct {
 // Global variable to hold parsed configuration
 var scriptConfig *ScriptConfiguration
 
+// BlacklistConfig represents blacklist configuration
+type BlacklistConfig struct {
+	// Redis-based blacklists
+	RedisIPSet     string `json:"redis_ip_set,omitempty"`     // Redis set name for blacklisted IPs
+	RedisDomainSet string `json:"redis_domain_set,omitempty"` // Redis set name for blacklisted domains
+	
+	// File-based blacklists
+	IPBlacklistFile     string `json:"ip_blacklist_file,omitempty"`     // Path to IP blacklist file
+	DomainBlacklistFile string `json:"domain_blacklist_file,omitempty"` // Path to domain blacklist file
+	
+	// Configuration options
+	BlockOnMatch    bool `json:"block_on_match"`     // Whether to block DNS resolution on blacklist match
+	LogOnly         bool `json:"log_only"`           // If true, only log matches without blocking
+	RefreshInterval int  `json:"refresh_interval"`   // How often to reload file-based blacklists (seconds)
+}
+
+// Global blacklist configuration and data
+var (
+	blacklistConfig    *BlacklistConfig
+	ipBlacklist        map[string]bool     // In-memory IP blacklist
+	domainBlacklist    map[string]bool     // In-memory domain blacklist
+	lastBlacklistLoad  time.Time           // Last time file blacklists were loaded
+)
+
 // Input validation functions
 var (
 	validIPRegex     = regexp.MustCompile(`^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$`)
@@ -227,6 +251,190 @@ func matchesClientPattern(clientIP, pattern string) bool {
 	// Try regex match
 	if regex, err := regexp.Compile(pattern); err == nil {
 		return regex.MatchString(clientIP)
+	}
+	
+	return false
+}
+
+// loadBlacklistConfiguration loads blacklist configuration from JSON file
+func loadBlacklistConfiguration(configPath string) (*BlacklistConfig, error) {
+	// ASSUMPTION: Blacklist configuration is in JSON format for consistency with script config
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read blacklist config file: %v", err)
+	}
+	
+	var config BlacklistConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse blacklist JSON config: %v", err)
+	}
+	
+	// Set default refresh interval if not specified
+	// ASSUMPTION: Default to 300 seconds (5 minutes) for reasonable balance between freshness and performance
+	if config.RefreshInterval <= 0 {
+		config.RefreshInterval = 300
+	}
+	
+	// Validate file paths if specified
+	if config.IPBlacklistFile != "" {
+		if _, err := os.Stat(config.IPBlacklistFile); err != nil {
+			return nil, fmt.Errorf("IP blacklist file not accessible: %v", err)
+		}
+	}
+	if config.DomainBlacklistFile != "" {
+		if _, err := os.Stat(config.DomainBlacklistFile); err != nil {
+			return nil, fmt.Errorf("domain blacklist file not accessible: %v", err)
+		}
+	}
+	
+	log.Printf("Loaded blacklist configuration: Redis IP set=%s, Redis domain set=%s, IP file=%s, domain file=%s", 
+		config.RedisIPSet, config.RedisDomainSet, config.IPBlacklistFile, config.DomainBlacklistFile)
+	
+	return &config, nil
+}
+
+// loadFileBlacklists loads blacklists from files into memory
+func loadFileBlacklists() error {
+	if blacklistConfig == nil {
+		return nil // No blacklist configuration
+	}
+	
+	// Check if refresh is needed
+	// ASSUMPTION: Only reload if refresh interval has passed to avoid unnecessary I/O
+	if time.Since(lastBlacklistLoad) < time.Duration(blacklistConfig.RefreshInterval)*time.Second {
+		return nil
+	}
+	
+	// Load IP blacklist file
+	if blacklistConfig.IPBlacklistFile != "" {
+		newIPBlacklist := make(map[string]bool)
+		
+		data, err := ioutil.ReadFile(blacklistConfig.IPBlacklistFile)
+		if err != nil {
+			log.Printf("WARNING: Failed to load IP blacklist file: %v", err)
+		} else {
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				// ASSUMPTION: Skip empty lines and comments (lines starting with #)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				
+				// Validate IP format
+				if net.ParseIP(line) != nil {
+					newIPBlacklist[line] = true
+				} else {
+					log.Printf("WARNING: Invalid IP in blacklist file: %s", line)
+				}
+			}
+			ipBlacklist = newIPBlacklist
+			log.Printf("Loaded %d IPs from IP blacklist file", len(ipBlacklist))
+		}
+	}
+	
+	// Load domain blacklist file
+	if blacklistConfig.DomainBlacklistFile != "" {
+		newDomainBlacklist := make(map[string]bool)
+		
+		data, err := ioutil.ReadFile(blacklistConfig.DomainBlacklistFile)
+		if err != nil {
+			log.Printf("WARNING: Failed to load domain blacklist file: %v", err)
+		} else {
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				// ASSUMPTION: Skip empty lines and comments
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				
+				// ASSUMPTION: Convert domains to lowercase for case-insensitive matching
+				line = strings.ToLower(line)
+				
+				// Basic domain validation - must contain at least one dot
+				if strings.Contains(line, ".") {
+					newDomainBlacklist[line] = true
+				} else {
+					log.Printf("WARNING: Invalid domain in blacklist file: %s", line)
+				}
+			}
+			domainBlacklist = newDomainBlacklist
+			log.Printf("Loaded %d domains from domain blacklist file", len(domainBlacklist))
+		}
+	}
+	
+	lastBlacklistLoad = time.Now()
+	return nil
+}
+
+// checkIPBlacklist checks if an IP is blacklisted (Redis or file-based)
+func checkIPBlacklist(ip string, redisClient *redis.Client) bool {
+	if blacklistConfig == nil {
+		return false
+	}
+	
+	ctx := context.Background()
+	
+	// Check Redis-based IP blacklist
+	if blacklistConfig.RedisIPSet != "" && redisClient != nil {
+		exists, err := redisClient.SIsMember(ctx, blacklistConfig.RedisIPSet, ip).Result()
+		if err != nil {
+			log.Printf("WARNING: Failed to check Redis IP blacklist: %v", err)
+		} else if exists {
+			log.Printf("BLACKLIST HIT: IP %s found in Redis blacklist set %s", ip, blacklistConfig.RedisIPSet)
+			return true
+		}
+	}
+	
+	// Check file-based IP blacklist
+	if ipBlacklist != nil && ipBlacklist[ip] {
+		log.Printf("BLACKLIST HIT: IP %s found in file-based IP blacklist", ip)
+		return true
+	}
+	
+	return false
+}
+
+// checkDomainBlacklist checks if a domain is blacklisted (Redis or file-based)
+func checkDomainBlacklist(domain string, redisClient *redis.Client) bool {
+	if blacklistConfig == nil {
+		return false
+	}
+	
+	// ASSUMPTION: Normalize domain to lowercase and remove trailing dot for consistent matching
+	normalizedDomain := strings.ToLower(strings.TrimSuffix(domain, "."))
+	
+	ctx := context.Background()
+	
+	// Check Redis-based domain blacklist
+	if blacklistConfig.RedisDomainSet != "" && redisClient != nil {
+		exists, err := redisClient.SIsMember(ctx, blacklistConfig.RedisDomainSet, normalizedDomain).Result()
+		if err != nil {
+			log.Printf("WARNING: Failed to check Redis domain blacklist: %v", err)
+		} else if exists {
+			log.Printf("BLACKLIST HIT: Domain %s found in Redis blacklist set %s", normalizedDomain, blacklistConfig.RedisDomainSet)
+			return true
+		}
+	}
+	
+	// Check file-based domain blacklist
+	if domainBlacklist != nil && domainBlacklist[normalizedDomain] {
+		log.Printf("BLACKLIST HIT: Domain %s found in file-based domain blacklist", normalizedDomain)
+		return true
+	}
+	
+	// QUESTION: Should we also check parent domains for subdomain blocking?
+	// ASSUMPTION: Check parent domains for comprehensive blocking (e.g., block evil.com also blocks sub.evil.com)
+	if domainBlacklist != nil {
+		parts := strings.Split(normalizedDomain, ".")
+		for i := 1; i < len(parts); i++ {
+			parentDomain := strings.Join(parts[i:], ".")
+			if domainBlacklist[parentDomain] {
+				log.Printf("BLACKLIST HIT: Domain %s blocked by parent domain %s in blacklist", normalizedDomain, parentDomain)
+				return true
+			}
+		}
 	}
 	
 	return false
@@ -457,6 +665,19 @@ func Register(rt Route) error {
 		log.Printf("SCRIPT_CONFIG env var not set, using environment variables for script configuration")
 	}
 
+	// BLACKLIST_CONFIG: JSON configuration file for IP/domain blacklisting
+	blacklistConfigPath := os.Getenv("BLACKLIST_CONFIG")
+	if blacklistConfigPath != "" {
+		config, err := loadBlacklistConfiguration(blacklistConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load blacklist configuration: %v", err)
+		}
+		blacklistConfig = config
+		log.Printf("BLACKLIST_CONFIG loaded from %s", blacklistConfigPath)
+	} else {
+		log.Printf("BLACKLIST_CONFIG env var not set, blacklisting disabled")
+	}
+
 	opt, err := redis.ParseURL(redisEnv)
 	if err != nil {
 		panic(err)
@@ -479,6 +700,26 @@ func Register(rt Route) error {
 		log.Printf("Unable to delete key from Redis!  This isn't meant to be run without Redis:\n %s", err.Error())
 	}
 	log.Printf("Redis connection %s", val)
+
+	// Load initial blacklists and start periodic refresh
+	if blacklistConfig != nil {
+		if err := loadFileBlacklists(); err != nil {
+			log.Printf("WARNING: Failed to load initial blacklists: %v", err)
+		}
+		
+		// Start periodic blacklist refresh in background
+		go func() {
+			ticker := time.NewTicker(time.Duration(blacklistConfig.RefreshInterval) * time.Second)
+			defer ticker.Stop()
+			
+			for range ticker.C {
+				if err := loadFileBlacklists(); err != nil {
+					log.Printf("WARNING: Failed to refresh blacklists: %v", err)
+				}
+			}
+		}()
+		log.Printf("Started blacklist refresh background task (interval: %d seconds)", blacklistConfig.RefreshInterval)
+	}
 
 	// FEATURE: Redis key expiration monitoring for non-Linux/non-ipset support
 	// This enables cleanup of firewall rules when DNS TTLs expire by monitoring Redis keyspace notifications
@@ -561,6 +802,26 @@ func Register(rt Route) error {
 		if os.Getenv("DEBUG") != "" {
 			log.Printf("Request from client %s:\n%s\n", from, r)
 		}
+
+		// FEATURE: Domain blacklist checking before DNS resolution
+		if len(r.Question) > 0 {
+			requestedDomain := r.Question[0].Name
+			
+			if checkDomainBlacklist(requestedDomain, redisClient) {
+				if blacklistConfig.LogOnly {
+					log.Printf("BLACKLIST LOG: Domain %s requested by %s is blacklisted (log-only mode)", requestedDomain, from)
+				} else if blacklistConfig.BlockOnMatch {
+					log.Printf("BLACKLIST BLOCK: Blocking DNS request for blacklisted domain %s from %s", requestedDomain, from)
+					// ASSUMPTION: Return NXDOMAIN (domain not found) for blacklisted domains
+					m := new(dns.Msg)
+					m.SetReply(r)
+					m.SetRcode(r, dns.RcodeNameError) // NXDOMAIN
+					w.WriteMsg(m)
+					return
+				}
+			}
+		}
+
 		//dnsClient := &dns.Client{Net: "udp"}
 
 		// Set EDNS Client Subnet so that upstream DNS servers receive the real client IP
@@ -672,6 +933,18 @@ func Register(rt Route) error {
 			}
 			
 			if isAddressRecord {
+				// FEATURE: IP blacklist checking after DNS resolution
+				if checkIPBlacklist(currentIP.String(), redisClient) {
+					if blacklistConfig.LogOnly {
+						log.Printf("BLACKLIST LOG: IP %s resolved for domain %s is blacklisted (log-only mode)", currentIP.String(), r.Question[0].Name)
+					} else if blacklistConfig.BlockOnMatch {
+						log.Printf("BLACKLIST BLOCK: Removing blacklisted IP %s from DNS response for domain %s", currentIP.String(), r.Question[0].Name)
+						// ASSUMPTION: Skip this record by continuing to next iteration
+						// This effectively removes the blacklisted IP from the response
+						continue
+					}
+				}
+				
 				// padTtl is used in Redis TTL and in invoked scripts,
 				// while ttl is used in client response
 				ttl := a.Answer[i].Header().Ttl

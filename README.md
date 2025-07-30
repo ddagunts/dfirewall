@@ -22,6 +22,7 @@ REDIS=redis://127.0.0.1:6379 # location of Redis (REQUIRED)
 INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec when it encounters a new IP address (global fallback)
 EXPIRE_SCRIPT=               # path of an executable for "dfirewall" to exec when Redis keys expire (global fallback)
 SCRIPT_CONFIG=               # path to JSON configuration file for per-client script settings (overrides global settings)
+BLACKLIST_CONFIG=            # path to JSON configuration file for IP/domain blacklisting
 WEB_UI_PORT=                 # port for web-based rule management interface (e.g., 8080)
 ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6)
 DEBUG=                       # set to any value to enable verbose logging
@@ -296,6 +297,112 @@ Create a JSON configuration file and set `SCRIPT_CONFIG=/path/to/config.json`:
 - **IoT devices**: Quarantine suspicious activity with custom scripts
 - **Development subnets**: Allow external API access for testing
 
+## IP and Domain Blacklisting
+
+dfirewall supports comprehensive blacklisting of malicious IPs and domains using both Redis and file-based approaches for enhanced security.
+
+### Configuration
+
+Create a blacklist configuration file and set `BLACKLIST_CONFIG=/path/to/blacklist-config.json`:
+
+```json
+{
+  "redis_ip_set": "dfirewall:blacklist:ips",
+  "redis_domain_set": "dfirewall:blacklist:domains", 
+  "ip_blacklist_file": "/config/blacklist-ips.txt",
+  "domain_blacklist_file": "/config/blacklist-domains.txt",
+  "block_on_match": true,
+  "log_only": false,
+  "refresh_interval": 300
+}
+```
+
+### Blacklist Types
+
+#### Redis-Based Blacklists
+- **Dynamic**: Updated in real-time via Redis commands
+- **Scalable**: Supports millions of entries with fast lookups
+- **Distributed**: Can be shared across multiple dfirewall instances
+- **Persistent**: Survives restarts with Redis persistence
+
+#### File-Based Blacklists  
+- **Static**: Loaded from text files on disk
+- **Simple**: Easy to manage with standard text editors
+- **Version Controlled**: Can be managed with git/svn
+- **Portable**: Easy to backup and transfer
+
+### Blacklist File Format
+
+IP blacklist file (`blacklist-ips.txt`):
+```
+# Comments start with #
+192.0.2.1
+203.0.113.5
+198.51.100.10
+```
+
+Domain blacklist file (`blacklist-domains.txt`):
+```
+# Comments start with #
+evil-site.com
+malicious-domain.net
+phishing-example.org
+```
+
+### Behavior Options
+
+- **`block_on_match: true`**: Block DNS resolution for blacklisted entries
+- **`log_only: true`**: Only log matches without blocking (audit mode)
+- **`refresh_interval`**: How often to reload file-based blacklists (seconds)
+
+### Domain Blocking Features
+
+- **Case-insensitive matching**: Domains converted to lowercase
+- **Parent domain blocking**: Blocking `evil.com` also blocks `sub.evil.com`
+- **Trailing dot handling**: Properly handles DNS trailing dots
+
+### IP Blocking Features
+
+- **IPv4 and IPv6 support**: Blocks both address types
+- **Exact matching**: Precise IP address matching
+- **Response filtering**: Removes blacklisted IPs from DNS responses
+
+### Management Tools
+
+Use the provided script to manage Redis blacklists:
+
+```bash
+# Add entries
+./scripts/manage_blacklists.sh add-ip 192.0.2.1
+./scripts/manage_blacklists.sh add-domain evil.com
+
+# Load from files
+./scripts/manage_blacklists.sh load-ips /path/to/ips.txt
+./scripts/manage_blacklists.sh load-domains /path/to/domains.txt
+
+# List entries
+./scripts/manage_blacklists.sh list-ips
+./scripts/manage_blacklists.sh list-domains
+
+# Show statistics
+./scripts/manage_blacklists.sh stats
+```
+
+### Integration with Threat Intelligence
+
+- **Automated feeds**: Script integration with threat intel APIs
+- **Commercial feeds**: Support for commercial blacklist providers
+- **Custom sources**: Easy integration with internal security tools
+- **Real-time updates**: Redis allows instant blacklist updates
+
+### Use Cases
+
+- **Malware blocking**: Block known C&C servers and malware domains
+- **Phishing protection**: Block phishing domains and IP addresses
+- **Corporate policy**: Block social media, gambling, or adult content
+- **Compliance**: Meet regulatory requirements for content filtering
+- **DDoS mitigation**: Block known attack sources proactively
+
 You should see ipsets on the host being populated by the container.  Note that the second Signal IP (172.253.122.121) had a low TTL of 31s and expired out of the list already
 ```
 # ipset list
@@ -387,7 +494,7 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 - ~~add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)~~ ✅ **Completed** - Added `EXPIRE_SCRIPT` with Redis keyspace notifications monitoring
 - ~~add UI for viewing rules~~ ✅ **Completed** - Added web-based UI with rule viewing, statistics, and management features
 - ~~add better configuration options (invoke custom script(s) per client (if exist), etc)~~ ✅ **Completed** - Added JSON-based per-client script configuration with pattern matching
-- add support for checking IP and/or domain against blacklist in Redis (or file)
+- ~~add support for checking IP and/or domain against blacklist in Redis (or file)~~ ✅ **Completed** - Added comprehensive Redis and file-based IP/domain blacklisting
 - add support for checking IP and/or domain against common reputation checkers
 - add support for checking IP and/or domain by executing user-provided pass/fail script
 - AI integration :D
