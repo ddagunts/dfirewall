@@ -8,7 +8,10 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -19,6 +22,66 @@ type Route struct {
 	Zone string
 	From net.IP
 	To   net.IP
+}
+
+// Input validation functions
+var (
+	validIPRegex     = regexp.MustCompile(`^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$`)
+	validDomainRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*\.?$`)
+)
+
+func validateIP(ip string) bool {
+	if !validIPRegex.MatchString(ip) {
+		return false
+	}
+	parsed := net.ParseIP(ip)
+	return parsed != nil
+}
+
+func validateDomain(domain string) bool {
+	domain = strings.TrimSuffix(domain, ".")
+	if len(domain) == 0 || len(domain) > 253 {
+		return false
+	}
+	return validDomainRegex.MatchString(domain)
+}
+
+func validateTTL(ttl uint32) bool {
+	return ttl > 0 && ttl <= 86400 // Max 24 hours
+}
+
+func validateInvokeScript(scriptPath string) error {
+	if scriptPath == "" {
+		return fmt.Errorf("script path is empty")
+	}
+	
+	// Resolve to absolute path to prevent directory traversal
+	absPath, err := filepath.Abs(scriptPath)
+	if err != nil {
+		return fmt.Errorf("invalid script path: %v", err)
+	}
+	
+	// Check if file exists and is executable
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Errorf("script not found: %v", err)
+	}
+	
+	if info.IsDir() {
+		return fmt.Errorf("script path is a directory")
+	}
+	
+	// Check if file is executable
+	if info.Mode().Perm()&0111 == 0 {
+		return fmt.Errorf("script is not executable")
+	}
+	
+	return nil
+}
+
+func sanitizeForShell(input string) string {
+	// Remove any shell metacharacters
+	return regexp.MustCompile(`[^a-zA-Z0-9\._\-]`).ReplaceAllString(input, "")
 }
 
 func inRange(ipLow, ipHigh, ip netip.Addr) bool {
@@ -43,6 +106,9 @@ func Register(rt Route) error {
 	if invoke == "" {
 		log.Printf("INVOKE_SCRIPT env var not set, not executing script for new IPs")
 	} else {
+		if err := validateInvokeScript(invoke); err != nil {
+			log.Fatalf("Invalid INVOKE_SCRIPT: %v", err)
+		}
 		log.Printf("INVOKE_SCRIPT is set to %s", invoke)
 	}
 
@@ -86,6 +152,13 @@ func Register(rt Route) error {
 		case *net.TCPAddr:
 			from = addr.IP.String()
 		}
+		
+		// Validate client IP
+		if !validateIP(from) {
+			log.Printf("Invalid client IP: %s", from)
+			dns.HandleFailed(w, r)
+			return
+		}
 
 		if os.Getenv("DEBUG") != "" {
 			log.Printf("Request from client %s:\n%s\n", from, r)
@@ -114,10 +187,17 @@ func Register(rt Route) error {
 			r.Extra = append(r.Extra, o)
 		}
 		dnsClient := &dns.Client{Net: "udp"}
-		a, _, _ := dnsClient.Exchange(r, upstream)
-		//if err != nil {
-		//	return err
-		//}
+		a, _, err := dnsClient.Exchange(r, upstream)
+		if err != nil {
+			log.Printf("DNS query failed: %v", err)
+			dns.HandleFailed(w, r)
+			return
+		}
+		if a == nil {
+			log.Printf("Empty DNS response from upstream")
+			dns.HandleFailed(w, r)
+			return
+		}
 		if os.Getenv("DEBUG") != "" {
 			log.Printf("Response from upstream %s:\n%s\n", upstream, a)
 		}
@@ -138,6 +218,12 @@ func Register(rt Route) error {
 				// while ttl is used in client response
 				ttl := a.Answer[i].Header().Ttl
 				padTtl = ttl
+				// Validate TTL
+				if !validateTTL(ttl) {
+					log.Printf("Invalid TTL: %d", ttl)
+					continue
+				}
+				
 				// pad very low TTLs
 				if ttl < 30 {
 					padTtl = ttl + 30
@@ -163,11 +249,25 @@ func Register(rt Route) error {
 				newTtl := time.Duration(padTtl) * time.Second
 				newTtlS := strconv.FormatFloat(newTtl.Seconds(), 'f', -1, 64)
 				domain := r.Question[0].Name
+				
+				// Validate domain name
+				if !validateDomain(domain) {
+					log.Printf("Invalid domain: %s", domain)
+					continue
+				}
+				
 				key := "rules:" + from + ":" + ipAddress.String() + ":" + domain
-				os.Setenv("CLIENT_IP", from)
-				os.Setenv("RESOLVED_IP", ipAddress.String())
-				os.Setenv("DOMAIN", domain)
-				os.Setenv("TTL", newTtlS)
+				
+				// Sanitize environment variables to prevent injection
+				sanitizedClientIP := sanitizeForShell(from)
+				sanitizedResolvedIP := sanitizeForShell(ipAddress.String())
+				sanitizedDomain := sanitizeForShell(domain)
+				sanitizedTTL := sanitizeForShell(newTtlS)
+				
+				os.Setenv("CLIENT_IP", sanitizedClientIP)
+				os.Setenv("RESOLVED_IP", sanitizedResolvedIP)
+				os.Setenv("DOMAIN", sanitizedDomain)
+				os.Setenv("TTL", sanitizedTTL)
 				_, err := redisClient.Get(ctx, key).Result()
 				// insert into Redis
 				if err != nil {
@@ -184,11 +284,9 @@ func Register(rt Route) error {
 						cmd := exec.Command(invoke)
 						output, err := cmd.CombinedOutput()
 						if err != nil {
-							if os.Getenv("DEBUG") != "" {
-								log.Fatalf("Invoke command failed: %v\nOutput: %s", err, output)
-							}
-						}
-						if os.Getenv("DEBUG") != "" {
+							log.Printf("Invoke command failed: %v\nOutput: %s", err, output)
+							// Continue processing instead of fatal exit
+						} else if os.Getenv("DEBUG") != "" {
 							fmt.Printf("Invoke command succeeded:\n%s", output)
 						}
 					}
@@ -205,11 +303,9 @@ func Register(rt Route) error {
 						cmd := exec.Command(invoke)
 						output, err := cmd.CombinedOutput()
 						if err != nil {
-							if os.Getenv("DEBUG") != "" {
-								log.Fatalf("Invoke command failed: %v\nOutput: %s", err, output)
-							}
-						}
-						if os.Getenv("DEBUG") != "" {
+							log.Printf("Invoke command failed: %v\nOutput: %s", err, output)
+							// Continue processing instead of fatal exit
+						} else if os.Getenv("DEBUG") != "" {
 							fmt.Printf("Invoke command succeeded:\n%s", output)
 						}
 					}
