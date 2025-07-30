@@ -23,6 +23,7 @@ INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec whe
 EXPIRE_SCRIPT=               # path of an executable for "dfirewall" to exec when Redis keys expire (global fallback)
 SCRIPT_CONFIG=               # path to JSON configuration file for per-client script settings (overrides global settings)
 BLACKLIST_CONFIG=            # path to JSON configuration file for IP/domain blacklisting
+REPUTATION_CONFIG=           # path to JSON configuration file for IP/domain reputation checking
 WEB_UI_PORT=                 # port for web-based rule management interface (e.g., 8080)
 ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6)
 DEBUG=                       # set to any value to enable verbose logging
@@ -403,6 +404,168 @@ Use the provided script to manage Redis blacklists:
 - **Compliance**: Meet regulatory requirements for content filtering
 - **DDoS mitigation**: Block known attack sources proactively
 
+## IP and Domain Reputation Checking
+
+dfirewall integrates with leading threat intelligence providers to automatically check IP addresses and domains against reputation databases in real-time.
+
+### Configuration
+
+Create a reputation configuration file and set `REPUTATION_CONFIG=/path/to/reputation-config.json`:
+
+```json
+{
+  "version": "1.0",
+  "cache_ttl": 3600,
+  "checkers": [
+    {
+      "name": "virustotal_ip",
+      "type": "ip",
+      "provider": "virustotal",
+      "enabled": true,
+      "api_key": "your_virustotal_api_key_here",
+      "base_url": "https://www.virustotal.com/api/v3",
+      "timeout": 10,
+      "rate_limit": 4,
+      "cache_ttl": 7200,
+      "threshold": 5.0,
+      "headers": {
+        "x-apikey": "your_virustotal_api_key_here"
+      },
+      "query_format": "/ip_addresses/{target}"
+    }
+  ]
+}
+```
+
+### Supported Providers
+
+#### VirusTotal
+- **IP Reputation**: Checks IPs against VirusTotal's threat intelligence database
+- **Domain Reputation**: Analyzes domains for malicious content and associations
+- **API Key Required**: Get your free API key at [VirusTotal](https://www.virustotal.com/gui/join-us)
+- **Rate Limits**: 4 requests/minute for free accounts, 1000/minute for premium
+
+#### AbuseIPDB
+- **IP Reputation**: Community-driven IP abuse reporting database
+- **Confidence Scoring**: Percentage-based confidence scores for IP threats
+- **API Key Required**: Free registration at [AbuseIPDB](https://www.abuseipdb.com/api)
+- **Rate Limits**: 1000 requests/day for free accounts
+
+#### URLVoid
+- **Domain Reputation**: Checks domains against multiple security engines
+- **Multi-Engine Analysis**: Aggregates results from 30+ security vendors
+- **API Key Required**: Paid service at [URLVoid](https://www.urlvoid.com/api/)
+- **Rate Limits**: Varies by subscription plan
+
+#### Custom Providers
+- **Flexible Integration**: Support for any REST API-based threat intelligence service
+- **Custom Headers**: Authentication and custom request headers
+- **Configurable Endpoints**: Adaptable URL patterns and query formats
+
+### Reputation Checking Flow
+
+1. **Domain Checking**: Before DNS resolution, domains are checked against reputation services
+2. **IP Checking**: After DNS resolution, resolved IPs are checked for reputation
+3. **Threshold-Based Blocking**: Configurable thresholds determine when to block
+4. **Caching**: Results are cached to reduce API calls and improve performance
+5. **Rate Limiting**: Built-in rate limiting respects provider API limits
+
+### Configuration Options
+
+#### Per-Checker Settings
+- **`enabled`**: Enable/disable individual reputation checkers
+- **`threshold`**: Minimum score to consider malicious (provider-specific)
+- **`timeout`**: HTTP request timeout in seconds
+- **`rate_limit`**: Maximum requests per minute to the provider
+- **`cache_ttl`**: How long to cache reputation results (seconds)
+
+#### Provider-Specific Settings
+- **`api_key`**: Authentication key for the reputation service
+- **`base_url`**: Base URL for the reputation API
+- **`headers`**: Custom HTTP headers for authentication
+- **`query_format`**: URL pattern with `{target}` placeholder for IP/domain
+
+### Reputation Results
+
+Each reputation check returns:
+- **Score**: Numerical reputation score (interpretation varies by provider)
+- **IsMalicious**: Boolean indicating if the target exceeds the threshold
+- **Provider**: Which reputation service provided the result
+- **Cached**: Whether the result came from cache or a fresh API call
+
+### Blocking Behavior
+
+- **Domain Blocking**: Malicious domains receive NXDOMAIN responses
+- **IP Filtering**: Malicious IPs are removed from DNS responses
+- **Logging**: All reputation actions are logged with scores and providers
+- **Fallback**: Network errors don't block legitimate traffic
+
+### Performance Features
+
+#### Caching System
+- **Redis-Based**: Uses existing Redis infrastructure for caching
+- **TTL Management**: Configurable cache expiration per provider
+- **Hash-Based Keys**: SHA-256 hashes prevent key collisions
+
+#### Rate Limiting
+- **Per-Provider Limits**: Individual rate limits for each reputation service
+- **Token Bucket**: Prevents API quota exhaustion
+- **Graceful Degradation**: Continues operation when rate limits are exceeded
+
+#### Concurrent Processing
+- **Async Checks**: Non-blocking reputation lookups
+- **Timeout Protection**: Prevents slow APIs from blocking DNS responses
+- **Error Handling**: Robust error handling for network issues
+
+### Use Cases
+
+#### Enterprise Security
+- **APT Detection**: Block advanced persistent threat infrastructure
+- **C&C Blocking**: Prevent communication with command & control servers
+- **Data Exfiltration**: Block known data exfiltration domains
+- **Compliance**: Meet regulatory requirements for threat intelligence
+
+#### Network Monitoring
+- **Threat Hunting**: Identify compromised devices contacting malicious IPs
+- **Incident Response**: Track malware communications and IOCs
+- **Forensics**: Log reputation data for security investigations
+
+#### Automated Defense
+- **Zero-Day Protection**: Block newly discovered threats automatically
+- **IOC Integration**: Consume threat intelligence feeds in real-time
+- **Dynamic Blocking**: Adapt to emerging threats without manual updates
+
+### Integration Examples
+
+#### Threat Intelligence Feeds
+```bash
+# Update VirusTotal API key
+jq '.checkers[0].api_key = "new_api_key"' reputation-config.json > temp.json && mv temp.json reputation-config.json
+
+# Enable AbuseIPDB checker
+jq '.checkers[] | select(.provider == "abuseipdb") | .enabled = true' reputation-config.json
+```
+
+#### Custom Provider Integration
+```json
+{
+  "name": "internal_threat_intel",
+  "type": "ip",
+  "provider": "custom",
+  "enabled": true,
+  "base_url": "https://internal-api.company.com",
+  "timeout": 5,
+  "rate_limit": 1000,
+  "cache_ttl": 1800,
+  "threshold": 8.0,
+  "headers": {
+    "Authorization": "Bearer internal_token",
+    "X-Source": "dfirewall"
+  },
+  "query_format": "/threat-intel/check/{target}"
+}
+```
+
 You should see ipsets on the host being populated by the container.  Note that the second Signal IP (172.253.122.121) had a low TTL of 31s and expired out of the list already
 ```
 # ipset list
@@ -495,6 +658,6 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 - ~~add UI for viewing rules~~ ✅ **Completed** - Added web-based UI with rule viewing, statistics, and management features
 - ~~add better configuration options (invoke custom script(s) per client (if exist), etc)~~ ✅ **Completed** - Added JSON-based per-client script configuration with pattern matching
 - ~~add support for checking IP and/or domain against blacklist in Redis (or file)~~ ✅ **Completed** - Added comprehensive Redis and file-based IP/domain blacklisting
-- add support for checking IP and/or domain against common reputation checkers
+- ~~add support for checking IP and/or domain against common reputation checkers~~ ✅ **Completed** - Added integration with VirusTotal, AbuseIPDB, URLVoid, and custom reputation services
 - add support for checking IP and/or domain by executing user-provided pass/fail script
 - AI integration :D

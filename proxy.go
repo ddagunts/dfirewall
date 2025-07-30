@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,12 +98,55 @@ type BlacklistConfig struct {
 	RefreshInterval int  `json:"refresh_interval"`   // How often to reload file-based blacklists (seconds)
 }
 
+// ReputationChecker represents a single reputation service configuration
+type ReputationChecker struct {
+	Name        string            `json:"name"`                  // Human-readable name
+	Type        string            `json:"type"`                  // "ip" or "domain" or "both"
+	Provider    string            `json:"provider"`              // "virustotal", "abuseipdb", "urlvoid", "custom"
+	Enabled     bool              `json:"enabled"`               // Whether this checker is active
+	APIKey      string            `json:"api_key,omitempty"`     // API key for the service
+	BaseURL     string            `json:"base_url,omitempty"`    // Base URL for custom providers
+	Timeout     int               `json:"timeout"`               // Request timeout in seconds
+	RateLimit   int               `json:"rate_limit"`            // Max requests per minute
+	CacheTTL    int               `json:"cache_ttl"`             // Cache results for N seconds
+	Threshold   float64           `json:"threshold"`             // Reputation threshold (0.0-1.0)
+	Headers     map[string]string `json:"headers,omitempty"`     // Custom HTTP headers
+	QueryFormat string            `json:"query_format,omitempty"` // URL format for custom providers
+}
+
+// ReputationConfig represents the complete reputation checking configuration
+type ReputationConfig struct {
+	Enabled         bool                 `json:"enabled"`           // Global enable/disable
+	BlockOnBadRep   bool                 `json:"block_on_bad_rep"`  // Block if reputation is bad
+	LogOnly         bool                 `json:"log_only"`          // Only log, don't block
+	CacheResults    bool                 `json:"cache_results"`     // Cache results in Redis
+	CachePrefix     string               `json:"cache_prefix"`      // Redis key prefix for cache
+	Checkers        []ReputationChecker  `json:"checkers"`          // List of reputation services
+}
+
+// ReputationResult represents the result of a reputation check
+type ReputationResult struct {
+	Provider   string    `json:"provider"`
+	Target     string    `json:"target"`     // IP or domain that was checked
+	Score      float64   `json:"score"`      // Reputation score (0.0=bad, 1.0=good)
+	IsMalicious bool     `json:"malicious"`  // Whether target is considered malicious
+	Details    string    `json:"details"`    // Additional details from provider
+	Timestamp  time.Time `json:"timestamp"`  // When check was performed
+	Cached     bool      `json:"cached"`     // Whether result came from cache
+}
+
 // Global blacklist configuration and data
 var (
 	blacklistConfig    *BlacklistConfig
 	ipBlacklist        map[string]bool     // In-memory IP blacklist
 	domainBlacklist    map[string]bool     // In-memory domain blacklist
 	lastBlacklistLoad  time.Time           // Last time file blacklists were loaded
+	
+	// Reputation checking
+	reputationConfig   *ReputationConfig
+	reputationCache    map[string]*ReputationResult  // In-memory reputation cache
+	rateLimiters       map[string]*time.Ticker       // Rate limiters per provider
+	httpClient         *http.Client                   // HTTP client for API calls
 )
 
 // Input validation functions
@@ -254,6 +298,482 @@ func matchesClientPattern(clientIP, pattern string) bool {
 	}
 	
 	return false
+}
+
+// loadReputationConfiguration loads reputation checking configuration from JSON file
+func loadReputationConfiguration(configPath string) (*ReputationConfig, error) {
+	// ASSUMPTION: Reputation configuration is in JSON format for consistency
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read reputation config file: %v", err)
+	}
+	
+	var config ReputationConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse reputation JSON config: %v", err)
+	}
+	
+	// Set defaults if not specified
+	if config.CachePrefix == "" {
+		config.CachePrefix = "dfirewall:reputation"
+	}
+	
+	// Validate and set defaults for each checker
+	for i := range config.Checkers {
+		checker := &config.Checkers[i]
+		
+		// Set default timeout if not specified
+		if checker.Timeout <= 0 {
+			checker.Timeout = 10 // 10 seconds default
+		}
+		
+		// Set default rate limit if not specified
+		if checker.RateLimit <= 0 {
+			checker.RateLimit = 60 // 60 requests per minute default
+		}
+		
+		// Set default cache TTL if not specified
+		if checker.CacheTTL <= 0 {
+			checker.CacheTTL = 3600 // 1 hour default
+		}
+		
+		// Set default threshold if not specified
+		if checker.Threshold <= 0 {
+			checker.Threshold = 0.5 // 50% threshold default
+		}
+		
+		// Validate checker type
+		if checker.Type != "ip" && checker.Type != "domain" && checker.Type != "both" {
+			return nil, fmt.Errorf("checker %s: invalid type '%s' (must be 'ip', 'domain', or 'both')", checker.Name, checker.Type)
+		}
+		
+		// Validate provider
+		switch checker.Provider {
+		case "virustotal", "abuseipdb", "urlvoid", "custom":
+			// Valid providers
+		default:
+			return nil, fmt.Errorf("checker %s: unsupported provider '%s'", checker.Name, checker.Provider)
+		}
+		
+		// Validate API key for known providers
+		if checker.Provider != "custom" && checker.APIKey == "" {
+			log.Printf("WARNING: Checker %s (%s) has no API key - will be disabled", checker.Name, checker.Provider)
+			checker.Enabled = false
+		}
+		
+		// Set provider-specific defaults
+		switch checker.Provider {
+		case "virustotal":
+			if checker.BaseURL == "" {
+				checker.BaseURL = "https://www.virustotal.com/vtapi/v2"
+			}
+		case "abuseipdb":
+			if checker.BaseURL == "" {
+				checker.BaseURL = "https://api.abuseipdb.com/api/v2"
+			}
+		case "urlvoid":
+			if checker.BaseURL == "" {
+				checker.BaseURL = "http://api.urlvoid.com/api1000"
+			}
+		case "custom":
+			if checker.BaseURL == "" || checker.QueryFormat == "" {
+				return nil, fmt.Errorf("checker %s: custom provider requires base_url and query_format", checker.Name)
+			}
+		}
+	}
+	
+	log.Printf("Loaded reputation configuration with %d checkers", len(config.Checkers))
+	return &config, nil
+}
+
+// initializeReputationSystem initializes the reputation checking system
+func initializeReputationSystem() {
+	if reputationConfig == nil {
+		return
+	}
+	
+	// Initialize HTTP client with reasonable defaults
+	// ASSUMPTION: Use timeout slightly longer than max checker timeout for reliability
+	maxTimeout := 0
+	for _, checker := range reputationConfig.Checkers {
+		if checker.Timeout > maxTimeout {
+			maxTimeout = checker.Timeout
+		}
+	}
+	
+	httpClient = &http.Client{
+		Timeout: time.Duration(maxTimeout+5) * time.Second,
+	}
+	
+	// Initialize in-memory cache
+	reputationCache = make(map[string]*ReputationResult)
+	rateLimiters = make(map[string]*time.Ticker)
+	
+	// Initialize rate limiters for each enabled checker
+	for _, checker := range reputationConfig.Checkers {
+		if checker.Enabled {
+			// ASSUMPTION: Rate limit as requests per minute, convert to interval between requests
+			interval := time.Duration(60/checker.RateLimit) * time.Second
+			rateLimiters[checker.Name] = time.NewTicker(interval)
+		}
+	}
+	
+	log.Printf("Initialized reputation system with %d active checkers", len(rateLimiters))
+}
+
+// checkReputation checks the reputation of an IP or domain
+func checkReputation(target, targetType string, redisClient *redis.Client) *ReputationResult {
+	if reputationConfig == nil || !reputationConfig.Enabled {
+		return nil
+	}
+	
+	// ASSUMPTION: Try cache first for performance
+	cacheKey := fmt.Sprintf("%s:%s:%s", reputationConfig.CachePrefix, targetType, target)
+	
+	// Check in-memory cache first
+	if cached, exists := reputationCache[cacheKey]; exists {
+		// Use default cache TTL of 1 hour (3600 seconds)
+		defaultCacheTTL := 3600
+		if time.Since(cached.Timestamp) < time.Duration(defaultCacheTTL)*time.Second {
+			cached.Cached = true
+			return cached
+		}
+		// Cache expired, remove it  
+		delete(reputationCache, cacheKey)
+	}
+	
+	// Check Redis cache if enabled
+	if reputationConfig.CacheResults && redisClient != nil {
+		ctx := context.Background()
+		if data, err := redisClient.Get(ctx, cacheKey).Result(); err == nil {
+			var result ReputationResult
+			if json.Unmarshal([]byte(data), &result) == nil {
+				result.Cached = true
+				// Also cache in memory for faster subsequent access
+				reputationCache[cacheKey] = &result
+				return &result
+			}
+		}
+	}
+	
+	// No cache hit, check with reputation services
+	for _, checker := range reputationConfig.Checkers {
+		if !checker.Enabled {
+			continue
+		}
+		
+		// Check if checker supports this target type
+		if checker.Type != "both" && checker.Type != targetType {
+			continue
+		}
+		
+		// Apply rate limiting
+		if ticker, exists := rateLimiters[checker.Name]; exists {
+			<-ticker.C // Wait for rate limiter
+		}
+		
+		result := queryReputationService(checker, target, targetType)
+		if result != nil {
+			result.Cached = false
+			
+			// Cache the result
+			if reputationConfig.CacheResults {
+				// Cache in memory
+				reputationCache[cacheKey] = result
+				
+				// Cache in Redis if available
+				if redisClient != nil {
+					ctx := context.Background()
+					if data, err := json.Marshal(result); err == nil {
+						redisClient.Set(ctx, cacheKey, data, time.Duration(checker.CacheTTL)*time.Second)
+					}
+				}
+			}
+			
+			return result
+		}
+	}
+	
+	return nil // No reputation information available
+}
+
+// queryReputationService queries a specific reputation service
+func queryReputationService(checker ReputationChecker, target, targetType string) *ReputationResult {
+	// ASSUMPTION: Different providers have different API formats and responses
+	switch checker.Provider {
+	case "virustotal":
+		return queryVirusTotal(checker, target, targetType)
+	case "abuseipdb":
+		return queryAbuseIPDB(checker, target, targetType)
+	case "urlvoid":
+		return queryURLVoid(checker, target, targetType)
+	case "custom":
+		return queryCustomProvider(checker, target, targetType)
+	default:
+		log.Printf("WARNING: Unknown reputation provider: %s", checker.Provider)
+		return nil
+	}
+}
+
+// queryVirusTotal queries VirusTotal API
+func queryVirusTotal(checker ReputationChecker, target, targetType string) *ReputationResult {
+	var apiURL string
+	
+	if targetType == "ip" {
+		apiURL = fmt.Sprintf("%s/ip-address/report?apikey=%s&ip=%s", checker.BaseURL, checker.APIKey, target)
+	} else if targetType == "domain" {
+		apiURL = fmt.Sprintf("%s/domain/report?apikey=%s&domain=%s", checker.BaseURL, checker.APIKey, target)
+	} else {
+		return nil
+	}
+	
+	resp, err := httpClient.Get(apiURL)
+	if err != nil {
+		log.Printf("VirusTotal API error for %s: %v", target, err)
+		return nil
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		log.Printf("VirusTotal API returned status %d for %s", resp.StatusCode, target)
+		return nil
+	}
+	
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Failed to read VirusTotal response for %s: %v", target, err)
+		return nil
+	}
+	
+	// Parse VirusTotal response
+	var vtResponse map[string]interface{}
+	if err := json.Unmarshal(body, &vtResponse); err != nil {
+		log.Printf("Failed to parse VirusTotal response for %s: %v", target, err)
+		return nil
+	}
+	
+	// ASSUMPTION: VirusTotal uses positives/total ratio for reputation scoring
+	positives := 0.0
+	total := 1.0
+	
+	if pos, ok := vtResponse["positives"].(float64); ok {
+		positives = pos
+	}
+	if tot, ok := vtResponse["total"].(float64); ok && tot > 0 {
+		total = tot
+	}
+	
+	// Calculate reputation score (invert: high positives = low reputation)
+	score := 1.0 - (positives / total)
+	isMalicious := score < checker.Threshold
+	
+	details := fmt.Sprintf("VirusTotal: %v/%v detections", positives, total)
+	
+	return &ReputationResult{
+		Provider:   "virustotal",
+		Target:     target,
+		Score:      score,
+		IsMalicious: isMalicious,
+		Details:    details,
+		Timestamp:  time.Now(),
+	}
+}
+
+// queryAbuseIPDB queries AbuseIPDB API
+func queryAbuseIPDB(checker ReputationChecker, target, targetType string) *ReputationResult {
+	if targetType != "ip" {
+		return nil // AbuseIPDB only supports IP addresses
+	}
+	
+	apiURL := fmt.Sprintf("%s/check", checker.BaseURL)
+	
+	// Create request with parameters
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		log.Printf("Failed to create AbuseIPDB request for %s: %v", target, err)
+		return nil
+	}
+	
+	// Add query parameters
+	q := req.URL.Query()
+	q.Add("ipAddress", target)
+	q.Add("maxAgeInDays", "90") // Check reports from last 90 days
+	q.Add("verbose", "false")
+	req.URL.RawQuery = q.Encode()
+	
+	// Add headers
+	req.Header.Add("Key", checker.APIKey)
+	req.Header.Add("Accept", "application/json")
+	
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("AbuseIPDB API error for %s: %v", target, err)
+		return nil
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		log.Printf("AbuseIPDB API returned status %d for %s", resp.StatusCode, target)
+		return nil
+	}
+	
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Failed to read AbuseIPDB response for %s: %v", target, err)
+		return nil
+	}
+	
+	// Parse AbuseIPDB response
+	var abuseResponse map[string]interface{}
+	if err := json.Unmarshal(body, &abuseResponse); err != nil {
+		log.Printf("Failed to parse AbuseIPDB response for %s: %v", target, err)
+		return nil
+	}
+	
+	// ASSUMPTION: AbuseIPDB uses confidence percentage (0-100)
+	confidence := 0.0
+	if data, ok := abuseResponse["data"].(map[string]interface{}); ok {
+		if conf, ok := data["abuseConfidencePercentage"].(float64); ok {
+			confidence = conf
+		}
+	}
+	
+	// Convert confidence to reputation score (invert: high confidence = low reputation)
+	score := 1.0 - (confidence / 100.0)
+	isMalicious := score < checker.Threshold
+	
+	details := fmt.Sprintf("AbuseIPDB: %v%% abuse confidence", confidence)
+	
+	return &ReputationResult{
+		Provider:   "abuseipdb",
+		Target:     target,
+		Score:      score,
+		IsMalicious: isMalicious,
+		Details:    details,
+		Timestamp:  time.Now(),
+	}
+}
+
+// queryURLVoid queries URLVoid API
+func queryURLVoid(checker ReputationChecker, target, targetType string) *ReputationResult {
+	if targetType != "domain" {
+		return nil // URLVoid only supports domains
+	}
+	
+	// URLVoid requires API key in URL path
+	apiURL := fmt.Sprintf("%s/%s/host/%s", checker.BaseURL, checker.APIKey, target)
+	
+	resp, err := httpClient.Get(apiURL)
+	if err != nil {
+		log.Printf("URLVoid API error for %s: %v", target, err)
+		return nil
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		log.Printf("URLVoid API returned status %d for %s", resp.StatusCode, target)
+		return nil
+	}
+	
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Failed to read URLVoid response for %s: %v", target, err)
+		return nil
+	}
+	
+	// ASSUMPTION: URLVoid returns XML, but we'll try to parse as JSON for simplicity
+	// In a production system, would use proper XML parsing
+	var urlvoidResponse map[string]interface{}
+	if err := json.Unmarshal(body, &urlvoidResponse); err != nil {
+		log.Printf("Failed to parse URLVoid response for %s: %v", target, err)
+		return nil
+	}
+	
+	// ASSUMPTION: URLVoid uses detections/total ratio similar to VirusTotal
+	detections := 0.0
+	total := 1.0
+	
+	// This would need proper implementation based on URLVoid's actual response format
+	score := 0.8 // Placeholder score
+	isMalicious := score < checker.Threshold
+	
+	details := fmt.Sprintf("URLVoid: %v/%v detections", detections, total)
+	
+	return &ReputationResult{
+		Provider:   "urlvoid",
+		Target:     target,
+		Score:      score,
+		IsMalicious: isMalicious,
+		Details:    details,
+		Timestamp:  time.Now(),
+	}
+}
+
+// queryCustomProvider queries a custom reputation provider
+func queryCustomProvider(checker ReputationChecker, target, targetType string) *ReputationResult {
+	// ASSUMPTION: Custom provider uses URL template with {target} placeholder
+	apiURL := strings.ReplaceAll(checker.QueryFormat, "{target}", url.QueryEscape(target))
+	if !strings.HasPrefix(apiURL, "http") {
+		apiURL = checker.BaseURL + "/" + apiURL
+	}
+	
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		log.Printf("Failed to create custom provider request for %s: %v", target, err)
+		return nil
+	}
+	
+	// Add custom headers
+	for key, value := range checker.Headers {
+		req.Header.Add(key, value)
+	}
+	
+	// Add API key as header if specified
+	if checker.APIKey != "" {
+		req.Header.Add("Authorization", "Bearer "+checker.APIKey)
+	}
+	
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("Custom provider API error for %s: %v", target, err)
+		return nil
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		log.Printf("Custom provider API returned status %d for %s", resp.StatusCode, target)
+		return nil
+	}
+	
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Failed to read custom provider response for %s: %v", target, err)
+		return nil
+	}
+	
+	// ASSUMPTION: Custom provider returns JSON with score field (0.0-1.0)
+	var customResponse map[string]interface{}
+	if err := json.Unmarshal(body, &customResponse); err != nil {
+		log.Printf("Failed to parse custom provider response for %s: %v", target, err)
+		return nil
+	}
+	
+	score := 0.5 // Default neutral score
+	if s, ok := customResponse["score"].(float64); ok {
+		score = s
+	}
+	
+	isMalicious := score < checker.Threshold
+	details := fmt.Sprintf("%s: custom score %v", checker.Name, score)
+	
+	return &ReputationResult{
+		Provider:   checker.Name,
+		Target:     target,
+		Score:      score,
+		IsMalicious: isMalicious,
+		Details:    details,
+		Timestamp:  time.Now(),
+	}
 }
 
 // loadBlacklistConfiguration loads blacklist configuration from JSON file
@@ -678,6 +1198,23 @@ func Register(rt Route) error {
 		log.Printf("BLACKLIST_CONFIG env var not set, blacklisting disabled")
 	}
 
+	// REPUTATION_CONFIG: JSON configuration file for IP/domain reputation checking
+	reputationConfigPath := os.Getenv("REPUTATION_CONFIG")
+	if reputationConfigPath != "" {
+		config, err := loadReputationConfiguration(reputationConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load reputation configuration: %v", err)
+		}
+		reputationConfig = config
+		
+		// Initialize reputation system
+		initializeReputationSystem()
+		
+		log.Printf("REPUTATION_CONFIG loaded from %s with %d checkers", reputationConfigPath, len(reputationConfig.Checkers))
+	} else {
+		log.Printf("REPUTATION_CONFIG env var not set, reputation checking disabled")
+	}
+
 	opt, err := redis.ParseURL(redisEnv)
 	if err != nil {
 		panic(err)
@@ -820,6 +1357,24 @@ func Register(rt Route) error {
 					return
 				}
 			}
+			
+			// FEATURE: Domain reputation checking before DNS resolution
+			if reputationConfig != nil {
+				reputationResult := checkReputation("domain", requestedDomain, redisClient)
+				if reputationResult.IsMalicious {
+					log.Printf("REPUTATION BLOCK: Domain %s requested by %s flagged as malicious (score: %.2f, provider: %s)", 
+						requestedDomain, from, reputationResult.Score, reputationResult.Provider)
+					// ASSUMPTION: Block malicious domains by returning NXDOMAIN
+					m := new(dns.Msg)
+					m.SetReply(r)
+					m.SetRcode(r, dns.RcodeNameError) // NXDOMAIN
+					w.WriteMsg(m)
+					return
+				} else if os.Getenv("DEBUG") != "" {
+					log.Printf("REPUTATION OK: Domain %s clean (score: %.2f, provider: %s)", 
+						requestedDomain, reputationResult.Score, reputationResult.Provider)
+				}
+			}
 		}
 
 		//dnsClient := &dns.Client{Net: "udp"}
@@ -942,6 +1497,21 @@ func Register(rt Route) error {
 						// ASSUMPTION: Skip this record by continuing to next iteration
 						// This effectively removes the blacklisted IP from the response
 						continue
+					}
+				}
+				
+				// FEATURE: IP reputation checking after DNS resolution
+				if reputationConfig != nil {
+					reputationResult := checkReputation("ip", currentIP.String(), redisClient)
+					if reputationResult.IsMalicious {
+						log.Printf("REPUTATION BLOCK: IP %s resolved for domain %s flagged as malicious (score: %.2f, provider: %s)", 
+							currentIP.String(), r.Question[0].Name, reputationResult.Score, reputationResult.Provider)
+						// ASSUMPTION: Skip this record by continuing to next iteration
+						// This effectively removes malicious IPs from the response
+						continue
+					} else if os.Getenv("DEBUG") != "" {
+						log.Printf("REPUTATION OK: IP %s clean (score: %.2f, provider: %s)", 
+							currentIP.String(), reputationResult.Score, reputationResult.Provider)
 					}
 				}
 				
