@@ -20,6 +20,7 @@ PORT=                        # listening port
 UPSTREAM=8.8.8.8:53          # upstream DNS resolver host and port (REQUIRED)
 REDIS=redis://127.0.0.1:6379 # location of Redis (REQUIRED)
 INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec when it encounters a new IP address
+EXPIRE_SCRIPT=               # path of an executable for "dfirewall" to exec when Redis keys expire (enables non-Linux/non-ipset support)
 ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6)
 DEBUG=                       # set to any value to enable verbose logging
 INVOKE_ALWAYS=               # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered, even if already present in Redis
@@ -181,6 +182,28 @@ root@debian:~/dfirewall# docker exec -it redis redis-cli keys '*'
 1) "rules:192.168.21.180:76.223.92.165:chat.signal.org."
 2) "rules:192.168.21.180:172.253.122.121:storage.signal.org."
 ```
+
+## Redis Key Expiration Monitoring (for non-Linux/non-ipset support)
+
+If you're running dfirewall on non-Linux platforms or want to use custom firewall management, you can enable Redis key expiration monitoring:
+
+```bash
+# Set the EXPIRE_SCRIPT environment variable
+EXPIRE_SCRIPT=/path/to/your/expire_script.sh
+
+# Example using the provided generic expire script
+EXPIRE_SCRIPT=./scripts/expire_generic.sh
+```
+
+When enabled, dfirewall will:
+1. Monitor Redis keyspace notifications for expired keys
+2. Execute your expire script when DNS TTLs expire
+3. Pass the same environment variables as INVOKE_SCRIPT, plus `ACTION=EXPIRE`
+
+**Redis Configuration Note**: Redis keyspace notifications must be enabled. dfirewall attempts to enable this automatically, but if it fails, run:
+```bash
+redis-cli CONFIG SET notify-keyspace-events Ex
+```
 You should see ipsets on the host being populated by the container.  Note that the second Signal IP (172.253.122.121) had a low TTL of 31s and expired out of the list already
 ```
 # ipset list
@@ -269,7 +292,7 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 - ~~fix EDNS handling~~ ✅ **Completed** - Fixed EDNS Client Subnet with IPv4/IPv6 support and proper validation
 - ~~add support for handling all IPs in a response (rather than selecting first IP only)~~ ✅ **Completed** - Added `HANDLE_ALL_IPS` environment variable option
 - ~~add AAAA records (IPv6 support)~~ ✅ **Completed** - Added AAAA record processing for IPv6 addresses
-- add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)
+- ~~add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)~~ ✅ **Completed** - Added `EXPIRE_SCRIPT` with Redis keyspace notifications monitoring
 - add UI for viewing rules
 - add better configuration options (invoke custom script(s) per client (if exist), etc)
 - add support for checking IP and/or domain against blacklist in Redis (or file)

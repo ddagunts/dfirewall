@@ -19,6 +19,7 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 - DNS interception and forwarding to upstream resolvers
 - Redis storage for tracking client IP → resolved IP → domain mappings with TTL expiration
 - Dynamic firewall rule creation via executable scripts
+- Redis key expiration monitoring with cleanup scripts (enables non-Linux/non-ipset support)
 - Support for both UDP and TCP DNS protocols
 - Support for both IPv4 (A records) and IPv6 (AAAA records)
 - Client IP detection and per-client rule management
@@ -52,6 +53,7 @@ Optional:
 - `PORT`: Listening port (default: 53)
 - `INVOKE_SCRIPT`: Path to executable script for firewall management
 - `INVOKE_ALWAYS`: Execute script for every IP encounter (not just new ones)
+- `EXPIRE_SCRIPT`: Path to executable script for cleanup when Redis keys expire (enables non-Linux/non-ipset support)
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
 - `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support
 - `DEBUG`: Enable verbose logging

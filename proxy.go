@@ -120,6 +120,17 @@ func Register(rt Route) error {
 		log.Printf("INVOKE_ALWAYS is set, executing INVOKE script for every matching request")
 	}
 
+	// EXPIRE_SCRIPT: Script to execute when Redis keys expire (for non-Linux/non-ipset support)
+	expireScript := os.Getenv("EXPIRE_SCRIPT")
+	if expireScript == "" {
+		log.Printf("EXPIRE_SCRIPT env var not set, Redis key expiration monitoring disabled")
+	} else {
+		if err := validateInvokeScript(expireScript); err != nil {
+			log.Fatalf("Invalid EXPIRE_SCRIPT: %v", err)
+		}
+		log.Printf("EXPIRE_SCRIPT is set to %s", expireScript)
+	}
+
 	opt, err := redis.ParseURL(redisEnv)
 	if err != nil {
 		panic(err)
@@ -142,6 +153,79 @@ func Register(rt Route) error {
 		log.Printf("Unable to delete key from Redis!  This isn't meant to be run without Redis:\n %s", err.Error())
 	}
 	log.Printf("Redis connection %s", val)
+
+	// FEATURE: Redis key expiration monitoring for non-Linux/non-ipset support
+	// This enables cleanup of firewall rules when DNS TTLs expire by monitoring Redis keyspace notifications
+	if expireScript != "" {
+		// Enable Redis keyspace notifications for expired events
+		// ASSUMPTION: This requires Redis config notify-keyspace-events to include 'Ex' for expired events
+		_, err := redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex").Result()
+		if err != nil {
+			log.Printf("WARNING: Failed to enable Redis keyspace notifications: %v", err)
+			log.Printf("Manual Redis config may be needed: CONFIG SET notify-keyspace-events Ex")
+		} else {
+			log.Printf("Enabled Redis keyspace notifications for key expiration events")
+		}
+		
+		// Start Redis expiration watchdog in a separate goroutine
+		go func() {
+			// ASSUMPTION: Subscribe to all expired events in database 0 (default)
+			pubsub := redisClient.Subscribe(ctx, "__keyevent@0__:expired")
+			defer pubsub.Close()
+			
+			log.Printf("Started Redis expiration watchdog, monitoring key expiration events")
+			log.Printf("EXPIRE_SCRIPT is set to: %s", expireScript)
+			
+			// Listen for expiration events
+			ch := pubsub.Channel()
+			for msg := range ch {
+				// msg.Payload contains the expired key name
+				expiredKey := msg.Payload
+				
+				// ASSUMPTION: Only process our firewall rule keys (format: "rules:client:ip:domain")
+				if strings.HasPrefix(expiredKey, "rules:") {
+					parts := strings.Split(expiredKey, ":")
+					if len(parts) >= 4 {
+						clientIP := parts[1]
+						resolvedIP := parts[2]
+						domain := strings.Join(parts[3:], ":") // domain might contain colons
+						
+						// QUESTION: Should we validate IPs here or trust Redis key format?
+						// ASSUMPTION: Trust Redis key format since we control key creation
+						
+						log.Printf("Key expired: %s (client=%s, resolved=%s, domain=%s)", expiredKey, clientIP, resolvedIP, domain)
+						
+						// Set environment variables for the expire script
+						// ASSUMPTION: Use same env vars as invoke script for consistency
+						os.Setenv("CLIENT_IP", sanitizeForShell(clientIP))
+						os.Setenv("RESOLVED_IP", sanitizeForShell(resolvedIP))
+						os.Setenv("DOMAIN", sanitizeForShell(domain))
+						os.Setenv("TTL", "0") // TTL is 0 for expired keys
+						os.Setenv("ACTION", "EXPIRE") // Indicate this is an expiration event
+						
+						// Execute the expire script
+						cmd := exec.Command(expireScript)
+						output, err := cmd.CombinedOutput()
+						if err != nil {
+							log.Printf("Expire script failed for %s: %v\nOutput: %s", expiredKey, err, output)
+						} else {
+							if os.Getenv("DEBUG") != "" {
+								log.Printf("Expire script succeeded for %s:\n%s", expiredKey, output)
+							} else {
+								log.Printf("Expire script executed successfully for %s", expiredKey)
+							}
+						}
+					} else {
+						log.Printf("WARNING: Malformed expired key format: %s", expiredKey)
+					}
+				}
+				// ASSUMPTION: Ignore non-firewall keys (other app keys, etc)
+			}
+			log.Printf("Redis expiration watchdog terminated")
+		}()
+	} else {
+		log.Printf("EXPIRE_SCRIPT not set, Redis key expiration monitoring disabled")
+	}
 
 	dns.HandleFunc(rt.Zone, func(w dns.ResponseWriter, r *dns.Msg) {
 

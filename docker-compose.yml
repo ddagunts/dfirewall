@@ -37,6 +37,7 @@ services:
       #- "ENABLE_EDNS=1" # Enable EDNS Client Subnet (now fixed with IPv4/IPv6 support)
       #- "DEBUG=1"
       - "INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh"
+      #- "EXPIRE_SCRIPT=/scripts/expire_generic.sh" # Enable for non-Linux/non-ipset platforms
       - "INVOKE_ALWAYS=1"
     hostname: "dfirewall"
     image: "dfirewall:latest"
