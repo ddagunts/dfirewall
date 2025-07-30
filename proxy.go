@@ -253,7 +253,8 @@ func Register(rt Route) error {
 				// Validate domain name
 				if !validateDomain(domain) {
 					log.Printf("Invalid domain: %s", domain)
-					continue
+					dns.HandleFailed(w, r)
+					return
 				}
 				
 				key := "rules:" + from + ":" + ipAddress.String() + ":" + domain
