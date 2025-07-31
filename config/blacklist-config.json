@@ -1,0 +1,9 @@
+{
+  "redis_ip_set": "dfirewall:blacklist:ips",
+  "redis_domain_set": "dfirewall:blacklist:domains",
+  "ip_blacklist_file": "/config/blacklist-ips.txt",
+  "domain_blacklist_file": "/config/blacklist-domains.txt",
+  "block_on_match": true,
+  "log_only": false,
+  "refresh_interval": 300
+}

@@ -1,0 +1,85 @@
+{
+  "version": "1.0",
+  "cache_ttl": 3600,
+  "checkers": [
+    {
+      "name": "virustotal_ip",
+      "type": "ip",
+      "provider": "virustotal",
+      "enabled": true,
+      "api_key": "your_virustotal_api_key_here",
+      "base_url": "https://www.virustotal.com/api/v3",
+      "timeout": 10,
+      "rate_limit": 4,
+      "cache_ttl": 7200,
+      "threshold": 5.0,
+      "headers": {
+        "x-apikey": "your_virustotal_api_key_here"
+      },
+      "query_format": "/ip_addresses/{target}"
+    },
+    {
+      "name": "virustotal_domain",
+      "type": "domain",
+      "provider": "virustotal",
+      "enabled": true,
+      "api_key": "your_virustotal_api_key_here",
+      "base_url": "https://www.virustotal.com/api/v3",
+      "timeout": 10,
+      "rate_limit": 4,
+      "cache_ttl": 3600,
+      "threshold": 3.0,
+      "headers": {
+        "x-apikey": "your_virustotal_api_key_here"
+      },
+      "query_format": "/domains/{target}"
+    },
+    {
+      "name": "abuseipdb",
+      "type": "ip",
+      "provider": "abuseipdb",
+      "enabled": true,
+      "api_key": "your_abuseipdb_api_key_here",
+      "base_url": "https://api.abuseipdb.com/api/v2",
+      "timeout": 10,
+      "rate_limit": 1000,
+      "cache_ttl": 7200,
+      "threshold": 50.0,
+      "headers": {
+        "Key": "your_abuseipdb_api_key_here",
+        "Accept": "application/json"
+      },
+      "query_format": "/check?ipAddress={target}&maxAgeInDays=90&verbose"
+    },
+    {
+      "name": "urlvoid",
+      "type": "domain",
+      "provider": "urlvoid",
+      "enabled": false,
+      "api_key": "your_urlvoid_api_key_here",
+      "base_url": "https://api.urlvoid.com/v1",
+      "timeout": 15,
+      "rate_limit": 1000,
+      "cache_ttl": 3600,
+      "threshold": 3.0,
+      "headers": {},
+      "query_format": "/pay-as-you-go/?key={api_key}&host={target}"
+    },
+    {
+      "name": "custom_threat_intel",
+      "type": "ip",
+      "provider": "custom",
+      "enabled": false,
+      "base_url": "https://your-threat-intel-api.com",
+      "timeout": 5,
+      "rate_limit": 100,
+      "cache_ttl": 1800,
+      "threshold": 7.5,
+      "headers": {
+        "Authorization": "Bearer your_custom_api_token",
+        "Content-Type": "application/json"
+      },
+      "query_format": "/check/ip/{target}"
+    }
+  ]
+}

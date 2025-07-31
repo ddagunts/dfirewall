@@ -1,0 +1,31 @@
+# dfirewall domain blacklist file
+# Lines starting with # are comments and will be ignored
+# Add one domain per line (without protocol)
+# Domains are case-insensitive and parent domain blocking is supported
+
+# Example malicious domains (these are examples - replace with real threat intelligence)
+evil-site.com
+malicious-domain.net
+phishing-example.org
+
+# Malware command and control domains
+# badactor.com
+# c2server.net
+
+# Cryptocurrency mining domains
+# coinhive.com
+# jsecoin.com
+
+# Social media domains (if blocking desired in corporate environments)
+# facebook.com
+# twitter.com
+# instagram.com
+
+# Adult content domains (if blocking desired)
+# adult-site.com
+
+# Gambling domains (if blocking desired)
+# casino-site.com
+
+# File sharing domains (if blocking desired)
+# file-sharing.com

@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "provider": "openai",
+  "api_key": "your_openai_api_key_here",
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-4",
+  "timeout": 30,
+  
+  "domain_analysis": true,
+  "traffic_anomaly": true,
+  "threat_hunting": true,
+  "adaptive_blocking": false,
+  
+  "analysis_window": 10,
+  "confidence_threshold": 0.7,
+  "max_analysis_requests": 60
+}

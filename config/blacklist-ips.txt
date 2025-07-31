@@ -1,0 +1,18 @@
+# dfirewall IP blacklist file
+# Lines starting with # are comments and will be ignored
+# Add one IP address per line
+
+# Example malicious IPs (these are examples - replace with real threat intelligence)
+192.0.2.1
+203.0.113.5
+198.51.100.10
+
+# Known botnet command and control servers
+# 1.2.3.4
+# 5.6.7.8
+
+# Cryptocurrency mining pools (if blocking desired)
+# 10.0.0.1
+
+# Suspicious IP ranges can be added individually
+# Add each IP in the range separately, or use CIDR in external tools
