@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -x
-set -v
 # Generic expire script for non-Linux/non-ipset platforms
 # This script is called when Redis keys expire, allowing cleanup of firewall rules
 # Environment variables provided by dfirewall:
