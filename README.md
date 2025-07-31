@@ -222,7 +222,8 @@ REJECT     all  --  192.168.21.158       anywhere             reject-with icmp-p
 Chain OUTPUT (policy ACCEPT)
 target     prot opt source               destination
 ```
-You can also look at the HTTP interface at http://192.168.21.1:8080  You can also manually delete rules from here
+You can also look at the web interface at http://192.168.21.1:8080
+You can also manually delete rules from the web ui (TODO: add button to also add domain to blacklist in Redis) 
 <img width="1296" height="884" alt="Screenshot 2025-07-30 at 22 20 45" src="https://github.com/user-attachments/assets/16bb2eb0-ded8-4b04-a00d-f7f21325a8dd" />
 
 
@@ -270,12 +271,9 @@ root@debian:~/dfirewall# dig www.google.com @192.168.21.1
 ;; MSG SIZE  rcvd: 32
 ```
 
-=======
-You can also look at the HTTP interface at http://192.168.21.1:8080
+Install optional tools useful on a router
 
-Install some additional tools useful in network troubleshooting if you wish
-
-`# apt -y install net-tools dnsutils netcat-openbsd tcpdump lsof htop iftop --no-install-recommends`
+`apt -y install net-tools dnsutils netcat-openbsd tcpdump lsof htop iftop ldnsutils netdiscover --no-install-recommends`
 
 # Test from a client on the LAN
 Try to ping some IP (1.1.1.1), it should fail.  Then try to ping it by name (one.one.one.one).  Then try to ping it by IP again.  Ping by IP should work until the TTL in the ipset expires.
