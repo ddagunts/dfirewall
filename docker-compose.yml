@@ -22,8 +22,6 @@ services:
     cap_add:
       - NET_ADMIN
     # Security hardening
-    cap_drop:
-      - ALL
     read_only: true
     tmpfs:
       - /tmp:rw,size=100M,mode=1777
@@ -34,17 +32,18 @@ services:
       #- "PORT=53"
       - "UPSTREAM=1.1.1.1:53"
       - "REDIS=redis://127.0.0.1:6379"
-      #- "ENABLE_EDNS=1" # Enable EDNS Client Subnet (now fixed with IPv4/IPv6 support)
+      - "ENABLE_EDNS=1" # Enable EDNS Client Subnet
       #- "DEBUG=1"
       - "INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh"
-      #- "EXPIRE_SCRIPT=/scripts/expire_generic.sh" # Enable for non-Linux/non-ipset platforms
-      #- "SCRIPT_CONFIG=/config/script-config.json" # Enable per-client script configuration
-      #- "BLACKLIST_CONFIG=/config/blacklist-config.json" # Enable IP/domain blacklisting
-      #- "REPUTATION_CONFIG=/config/reputation-config.json" # Enable IP/domain reputation checking
-      #- "AI_CONFIG=/config/ai-config.json" # Enable AI-powered threat detection :D
+      - "EXPIRE_SCRIPT=/scripts/expire_generic.sh"   # Enable for non-Linux/non-ipset platforms
+      #- "SCRIPT_CONFIG=/config/script-config.json"  # Enable per-client script configuration
+      - "BLACKLIST_CONFIG=/config/blacklist-config.example.json"  # Enable IP/domain blacklisting
+      #- "REPUTATION_CONFIG=/config/reputation-config.json"       # Enable IP/domain reputation checking
+      #- "AI_CONFIG=/config/ai-config.json"  # Enable AI-powered threat detection :D
       #- "CUSTOM_SCRIPT_CONFIG=/config/custom-script-config.json" # Enable custom script validation
-      #- "WEB_UI_PORT=8080" # Enable web UI for rule management
+      - "WEB_UI_PORT=8080" # Enable web UI for rule management
       - "INVOKE_ALWAYS=1"
+      - "HANDLE_ALL_IPS=1"
     hostname: "dfirewall"
     image: "dfirewall:latest"
     # Use root for NET_ADMIN capability but with security hardening

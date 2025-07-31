@@ -13,16 +13,16 @@ from debian:bookworm
 workdir /
 
 run apt -y update && apt -y upgrade && \
-apt -y --no-install-recommends install ipset iptables
+apt -y --no-install-recommends install ipset iptables redis
 
 copy --from=build /dfirewall /dfirewall
 
 copy scripts scripts
+copy config config
 
 # UDP and TCP
 expose 53
 
-# Note: Container runs as root due to NET_ADMIN capability requirement
-# Security is enforced through docker-compose.yml security options
+user nobody:nogroup
 
 entrypoint ["/dfirewall"]
