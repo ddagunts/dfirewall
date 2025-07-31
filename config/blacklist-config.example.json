@@ -1,0 +1,6 @@
+{
+  "redis_domain_set": "dfirewall:blacklist:domains",
+  "block_on_match": true,
+  "log_only": false,
+  "refresh_interval": 30
+}

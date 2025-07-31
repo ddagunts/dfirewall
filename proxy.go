@@ -2986,8 +2986,8 @@ func Register(rt Route) error {
 				}
 				
 				// pad very low TTLs
-				if ttl < 30 {
-					padTtl = ttl + 30
+				if ttl < 60 {
+					padTtl = ttl + 60
 				}
 				// clamp TTL at 1 hour
 				if ttl > 3600 {
@@ -3075,7 +3075,7 @@ func Register(rt Route) error {
 					executeScript(from, targetIP.String(), domain, newTtlS, "ADD", true)
 				} else {
 					log.Printf("Update %s for %s, %s %s", targetIP, from, domain, newTtl)
-					resp, err := redisClient.Set(ctx, key, "", newTtl).Result()
+					resp, err := redisClient.Set(ctx, key, newTtl, newTtl).Result()
 					if err != nil {
 						log.Printf("Unable to add key to Redis! %s", err.Error())
 					}
@@ -3266,9 +3266,6 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         }
         
         async function deleteRule(key) {
-            if (!confirm('Are you sure you want to delete this rule?')) {
-                return;
-            }
             
             try {
                 const response = await fetch('/api/rules/delete', {
@@ -3428,16 +3425,18 @@ func handleAPIDeleteRule(w http.ResponseWriter, r *http.Request, redisClient *re
 	}
 	
 	ctx := context.Background()
-	result, err := redisClient.Del(ctx, req.Key).Result()
+	// result, err := redisClient.Del(ctx, req.Key).Result()
+        // Don't Delete key, but expire it
+	_, err := redisClient.Set(ctx, req.Key, "", 1).Result()
 	if err != nil {
 		http.Error(w, "Error deleting rule: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	
-	if result == 0 {
-		http.Error(w, "Rule not found", http.StatusNotFound)
-		return
-	}
+	//if result == 0 {
+	//	http.Error(w, "Rule not found", http.StatusNotFound)
+	//	return
+	//}
 	
 	log.Printf("Manually deleted rule: %s", req.Key)
 	

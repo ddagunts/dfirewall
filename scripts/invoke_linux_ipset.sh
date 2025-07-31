@@ -6,30 +6,6 @@
 # Create an "ipset" for each local client with a list of allowed IPs.
 # Default timeout is 60 but we have an explicit TTL set for every IP added
 
-# Input validation - ensure variables are set and contain only safe characters
-if [ -z "$CLIENT_IP" ] || [ -z "$RESOLVED_IP" ] || [ -z "$TTL" ]; then
-    echo "Error: Required environment variables not set"
-    exit 1
-fi
-
-# Validate IP address format (basic validation)
-if ! echo "$CLIENT_IP" | grep -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' > /dev/null; then
-    echo "Error: Invalid CLIENT_IP format"
-    exit 1
-fi
-
-if ! echo "$RESOLVED_IP" | grep -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' > /dev/null; then
-    echo "Error: Invalid RESOLVED_IP format"
-    exit 1
-fi
-
-# Validate TTL is numeric
-if ! echo "$TTL" | grep -E '^[0-9]+(\.[0-9]+)?$' > /dev/null; then
-    echo "Error: Invalid TTL format"
-    exit 1
-fi
-
-# Use quoted variables to prevent shell injection
 ipset -N "$CLIENT_IP" --exist nethash timeout 60
 ipset --exist add "$CLIENT_IP" "$RESOLVED_IP" timeout "$TTL"
 

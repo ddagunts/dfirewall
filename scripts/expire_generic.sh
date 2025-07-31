@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -x
+set -v
 # Generic expire script for non-Linux/non-ipset platforms
 # This script is called when Redis keys expire, allowing cleanup of firewall rules
 # Environment variables provided by dfirewall:
@@ -10,7 +12,10 @@
 #   ACTION       - Always "EXPIRE" for expiration events
 
 # ASSUMPTION: Log all expiration events for debugging and monitoring
-echo "$(date): Key expired - Client: $CLIENT_IP, Resolved: $RESOLVED_IP, Domain: $DOMAIN" >> /var/log/dfirewall-expire.log
+echo "$(date): Key expired - Client: $CLIENT_IP, Resolved: $RESOLVED_IP, Domain: $DOMAIN"
+
+# Remove IP from relevant ipset
+ipset del "$CLIENT_IP" "$RESOLVED_IP" -exist
 
 # EXAMPLE: For platforms with different firewall systems
 # Uncomment and modify the appropriate section below:
