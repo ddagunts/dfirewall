@@ -320,7 +320,7 @@ COMMIT
 -A FORWARD -s 192.168.21.0/24 -j REJECT
 COMMIT
 ```
-As configured above, the firewall doesn't reject traffic from a client **until** at least one DNS request is made by the client.
+As configured in this example, the firewall doesn't reject traffic from a client **until** at least one DNS request is made by the client.
 
 Since the example setup uses ipset we don't need EXPIRE_SCRIPT enabled (since IPs expire on their own), but it does allow the "Delete" button in the UI to work.
 
