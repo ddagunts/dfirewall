@@ -429,6 +429,16 @@ func Register(rt Route) error {
 			if rrType, ok := rr.(*dns.A); ok {
 				resolvedIP := rrType.A.String()
 				domain := rrType.Hdr.Name
+				
+				// Clamp TTL to maximum 3600 seconds
+				originalTTL := rrType.Hdr.Ttl
+				if originalTTL > 3600 {
+					rrType.Hdr.Ttl = 3600
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Clamped TTL from %d to 3600 seconds for %s -> %s", originalTTL, domain, resolvedIP)
+					}
+				}
+				
 				ttl := strconv.FormatUint(uint64(rrType.Hdr.Ttl), 10)
 
 				if os.Getenv("DEBUG") != "" {
@@ -527,6 +537,16 @@ func Register(rt Route) error {
 				// Handle IPv6 records similarly
 				resolvedIPv6 := rrType.AAAA.String()
 				domain := rrType.Hdr.Name
+				
+				// Clamp TTL to maximum 3600 seconds
+				originalTTL := rrType.Hdr.Ttl
+				if originalTTL > 3600 {
+					rrType.Hdr.Ttl = 3600
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Clamped TTL from %d to 3600 seconds for %s -> %s", originalTTL, domain, resolvedIPv6)
+					}
+				}
+				
 				ttl := strconv.FormatUint(uint64(rrType.Hdr.Ttl), 10)
 
 				if os.Getenv("DEBUG") != "" {
