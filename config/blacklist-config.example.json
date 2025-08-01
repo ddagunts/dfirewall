@@ -1,5 +1,8 @@
 {
-  "redis_domain_set": "dfirewall:blacklist:domains",
+  "enabled": true,
+  "use_redis_blacklist": true,
+  "redis_ip_key": "dfirewall:blacklist:ips",
+  "redis_domain_key": "dfirewall:blacklist:domains",
   "block_on_match": true,
   "log_only": false,
   "refresh_interval": 30

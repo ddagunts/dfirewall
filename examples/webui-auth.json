@@ -1,0 +1,26 @@
+{
+  "https_enabled": true,
+  "cert_file": "/etc/ssl/certs/dfirewall.crt",
+  "key_file": "/etc/ssl/private/dfirewall.key",
+  
+  "password_auth": true,
+  "username": "admin",
+  "password": "$2a$10$example.hashed.password.here",
+  
+  "ldap_auth": false,
+  "ldap_server": "ldap.example.com",
+  "ldap_port": 389,
+  "ldap_base_dn": "dc=example,dc=com",
+  "ldap_bind_dn": "cn=service,dc=example,dc=com",
+  "ldap_bind_pass": "service_password",
+  "ldap_user_attr": "uid",
+  "ldap_search_filter": "(objectClass=person)",
+  
+  "header_auth": false,
+  "header_name": "X-Remote-User",
+  "header_values": ["admin", "operator"],
+  "trusted_proxies": ["192.168.1.100/24", "10.0.0.0/8"],
+  
+  "session_secret": "your-secure-session-secret-here",
+  "session_expiry": 24
+}

@@ -66,6 +66,27 @@ Optional:
 - `AI_CONFIG`: Path to JSON configuration file for AI-powered threat detection :D
 - `CUSTOM_SCRIPT_CONFIG`: Path to JSON configuration file for user-provided pass/fail scripts
 - `WEB_UI_PORT`: Port for web-based rule management interface (1024-65535)
+- `WEBUI_AUTH_CONFIG`: Path to JSON configuration file for Web UI authentication settings
+- `WEBUI_HTTPS_ENABLED`: Enable HTTPS for Web UI (true/false)
+- `WEBUI_CERT_FILE`: Path to TLS certificate file for HTTPS
+- `WEBUI_KEY_FILE`: Path to TLS private key file for HTTPS
+- `WEBUI_PASSWORD_AUTH`: Enable password authentication (true/false)
+- `WEBUI_USERNAME`: Username for password authentication
+- `WEBUI_PASSWORD`: Password for authentication (will be hashed automatically)
+- `WEBUI_LDAP_AUTH`: Enable LDAP authentication (true/false)
+- `WEBUI_LDAP_SERVER`: LDAP server hostname
+- `WEBUI_LDAP_PORT`: LDAP server port (default: 389)
+- `WEBUI_LDAP_BASE_DN`: LDAP base DN for user search
+- `WEBUI_LDAP_BIND_DN`: LDAP bind DN for service account
+- `WEBUI_LDAP_BIND_PASS`: LDAP bind password for service account
+- `WEBUI_LDAP_USER_ATTR`: LDAP user attribute (default: uid)
+- `WEBUI_LDAP_SEARCH_FILTER`: LDAP search filter for users
+- `WEBUI_HEADER_AUTH`: Enable header-based authentication (true/false)
+- `WEBUI_HEADER_NAME`: HTTP header name to check for authentication
+- `WEBUI_HEADER_VALUES`: Comma-separated list of valid header values
+- `WEBUI_TRUSTED_PROXIES`: Comma-separated list of trusted proxy IPs/CIDRs
+- `WEBUI_SESSION_SECRET`: Secret key for session signing (auto-generated if not provided)
+- `WEBUI_SESSION_EXPIRY`: Session expiry time in hours (default: 24)
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
 - `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support
 - `DEBUG`: Enable verbose logging

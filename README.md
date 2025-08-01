@@ -19,6 +19,20 @@ Configuration is handled through environmental variables.  The following variabl
 PORT=                        # listening port (OPTIONAL)
 UPSTREAM=8.8.8.8:53          # upstream DNS resolver host and port (REQUIRED)
 REDIS=redis://127.0.0.1:6379 # location of Redis (REQUIRED)
+# Redis Security Configuration (OPTIONAL)
+REDIS_PASSWORD=              # Redis authentication password (overrides URL password)
+REDIS_TLS=true               # enable TLS/SSL connection to Redis (true/1/enabled)
+REDIS_TLS_CERT=              # path to client certificate file for mutual TLS
+REDIS_TLS_KEY=               # path to client private key file for mutual TLS
+REDIS_TLS_CA=                # path to CA certificate file for server verification
+REDIS_TLS_SERVER_NAME=       # override server name for TLS certificate verification
+REDIS_TLS_SKIP_VERIFY=       # skip TLS certificate verification (NOT recommended for production)
+# Redis Performance Configuration (OPTIONAL)
+REDIS_MAX_RETRIES=3          # maximum connection retry attempts
+REDIS_DIAL_TIMEOUT=5s        # connection establishment timeout
+REDIS_READ_TIMEOUT=3s        # read operation timeout
+REDIS_WRITE_TIMEOUT=3s       # write operation timeout
+REDIS_POOL_SIZE=10           # connection pool size
 INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec when it encounters a new IP address (global fallback) (OPTIONAL)
 EXPIRE_SCRIPT=               # path of an executable for "dfirewall" to exec when Redis keys expire (global fallback) (OPTIONAL)
 SCRIPT_CONFIG=               # path to JSON configuration file for per-client script settings (overrides global settings) (OPTIONAL)
@@ -27,6 +41,28 @@ REPUTATION_CONFIG=           # path to JSON configuration file for IP/domain rep
 AI_CONFIG=                   # path to JSON configuration file for AI-powered threat detection  (OPTIONAL)
 CUSTOM_SCRIPT_CONFIG=        # path to JSON configuration file for user-provided pass/fail scripts  (OPTIONAL)
 WEB_UI_PORT=                 # port for web-based rule management interface (e.g., 8080) (OPTIONAL)
+# Web UI Authentication Configuration (OPTIONAL)
+WEBUI_AUTH_CONFIG=           # path to JSON configuration file for Web UI authentication settings
+WEBUI_HTTPS_ENABLED=         # enable HTTPS (true/false)
+WEBUI_CERT_FILE=             # path to TLS certificate file for HTTPS
+WEBUI_KEY_FILE=              # path to TLS private key file for HTTPS
+WEBUI_PASSWORD_AUTH=         # enable password authentication (true/false)
+WEBUI_USERNAME=              # username for password authentication
+WEBUI_PASSWORD=              # password for authentication (will be hashed automatically)
+WEBUI_LDAP_AUTH=             # enable LDAP authentication (true/false)
+WEBUI_LDAP_SERVER=           # LDAP server hostname
+WEBUI_LDAP_PORT=             # LDAP server port (default: 389)
+WEBUI_LDAP_BASE_DN=          # LDAP base DN for user search
+WEBUI_LDAP_BIND_DN=          # LDAP bind DN for service account
+WEBUI_LDAP_BIND_PASS=        # LDAP bind password for service account
+WEBUI_LDAP_USER_ATTR=        # LDAP user attribute (default: uid)
+WEBUI_LDAP_SEARCH_FILTER=    # LDAP search filter for users
+WEBUI_HEADER_AUTH=           # enable header-based authentication (true/false)
+WEBUI_HEADER_NAME=           # HTTP header name to check for authentication
+WEBUI_HEADER_VALUES=         # comma-separated list of valid header values
+WEBUI_TRUSTED_PROXIES=       # comma-separated list of trusted proxy IPs/CIDRs
+WEBUI_SESSION_SECRET=        # secret key for session signing (auto-generated if not provided)
+WEBUI_SESSION_EXPIRY=        # session expiry time in hours (default: 24)
 ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6) (OPTIONAL)
 DEBUG=                       # set to any value to enable verbose logging (OPTIONAL)
 INVOKE_ALWAYS=               # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered (global fallback) (OPTIONAL)
@@ -346,6 +382,30 @@ When enabled, dfirewall will:
 redis-cli CONFIG SET notify-keyspace-events Ex
 ```
 
+## Redis Security Configuration
+
+dfirewall supports secure Redis connections with TLS encryption and authentication.
+
+**Key Security Features:**
+- Password authentication with secure connection URLs
+- TLS/SSL encryption for data in transit  
+- Mutual TLS (mTLS) with client certificates
+- Connection pooling and performance tuning
+- Production-ready deployment examples
+
+**Quick Setup:**
+```bash
+# Basic authenticated connection
+REDIS=redis://:password@127.0.0.1:6379
+REDIS_PASSWORD=your_secure_password
+
+# TLS encrypted connection
+REDIS_TLS=true
+REDIS=rediss://127.0.0.1:6380
+```
+
+**📖 For detailed configuration, see:** [docs/redis-security.md](docs/redis-security.md)
+
 ## Web UI for Rule Management
 
 dfirewall includes a built-in web interface for viewing and managing firewall rules. Enable it by setting the `WEB_UI_PORT` environment variable:
@@ -360,199 +420,161 @@ Once enabled, access the web interface at `http://localhost:8080` (or your serve
 - **Real-time Statistics**: View total rules, active clients, unique domains, and IPs
 - **Rule Listing**: See all active firewall rules with TTL and expiration times
 - **Rule Management**: Delete individual rules manually
+- **Blacklist Management**: Add/remove IPs and domains from blacklists
+- **Reputation Checking**: Check IP/domain reputation with threat intelligence providers
+- **AI Analysis**: Analyze domains and IPs for threats using AI providers
 - **Auto-refresh**: Interface updates every 30 seconds automatically
 
-**Security Note**: The web UI is intended for internal use only. It runs on HTTP and should not be exposed to untrusted networks.
+### Web UI Authentication and Security
+The Web UI supports enterprise-grade authentication and security features:
+
+**Supported Authentication Methods:**
+- **HTTPS/TLS encryption** with custom certificates
+- **Password authentication** with bcrypt hashing
+- **LDAP integration** for enterprise environments  
+- **Header-based auth** for reverse proxy setups
+- **Session management** with JWT tokens
+
+**Quick Setup:**
+```bash
+# Enable HTTPS with password authentication
+export WEBUI_HTTPS_ENABLED=true
+export WEBUI_CERT_FILE=/path/to/certificate.crt
+export WEBUI_KEY_FILE=/path/to/private.key
+export WEBUI_PASSWORD_AUTH=true
+export WEBUI_USERNAME=admin
+export WEBUI_PASSWORD=your_secure_password
+
+# Generate self-signed certificate
+./scripts/generate-cert.sh localhost ./certs
+```
+
+**📖 For detailed authentication setup, see:** [docs/webui-authentication.md](docs/webui-authentication.md)
 
 ## Per-Client Script Configuration
 
-dfirewall supports advanced per-client script configuration via JSON configuration files. This allows different firewall policies and scripts for different client IP ranges or patterns.
+dfirewall supports advanced per-client script configuration for different firewall policies based on client identity and network location.
 
-### Configuration File Format
+**Key Features:**
+- **Pattern Matching**: CIDR, single IP, and regex pattern support
+- **Script Customization**: Different invoke/expire scripts per client
+- **Environment Variables**: Custom variables for each client pattern
+- **Priority System**: Client-specific → defaults → global fallback
 
-Create a JSON configuration file and set `SCRIPT_CONFIG=/path/to/config.json`:
+**Quick Setup:**
+```bash
+export SCRIPT_CONFIG=/path/to/script-config.json
+```
 
+**Example Configuration:**
 ```json
 {
   "version": "1.0",
   "defaults": {
     "invoke_script": "/scripts/default_invoke.sh",
-    "expire_script": "/scripts/default_expire.sh", 
-    "invoke_always": false,
-    "environment": {
-      "DEFAULT_POLICY": "deny"
-    }
+    "environment": {"POLICY": "moderate"}
   },
   "clients": [
     {
       "client_pattern": "192.168.1.0/24",
       "description": "Corporate network",
-      "invoke_script": "/scripts/corporate_invoke.sh",
-      "invoke_always": true,
-      "environment": {
-        "SECURITY_LEVEL": "high",
-        "AUDIT_LOG": "/var/log/corporate.log"
-      }
-    },
-    {
-      "client_pattern": "10.0.0.1",
-      "description": "Admin workstation",
-      "invoke_script": "/scripts/admin_invoke.sh"
-    },
-    {
-      "client_pattern": "^172\\.16\\.(1[0-9]|2[0-9])\\..*",
-      "description": "Development subnet (regex)",
-      "invoke_script": "/scripts/dev_invoke.sh"
+      "invoke_script": "/scripts/corporate_strict.sh",
+      "environment": {"SECURITY_LEVEL": "high"}
     }
   ]
 }
 ```
 
-### Pattern Types Supported
-
-1. **Single IP**: `192.168.1.100` - Exact IP match
-2. **CIDR Notation**: `192.168.1.0/24` - Subnet range  
-3. **Regex Pattern**: `^192\.168\.(1|2)\..*` - Advanced pattern matching
-
-### Configuration Priority
-
-1. Client-specific settings (first matching pattern wins)
-2. Default settings from configuration file
-3. Environment variables (global fallback)
-
-### Additional Features
-
-- **Per-client environment variables**: Set custom variables for each client pattern
-- **Selective script execution**: Override `invoke_always` per client
-- **Custom expiration scripts**: Different cleanup behavior per client type
-- **Audit and logging**: Track which configuration is used for each client
-
-### Example Use Cases
-
-- **Corporate networks**: Strict auditing and high-security scripts
-- **Guest networks**: Basic firewall rules with limited access
-- **Admin workstations**: Bypass restrictions or enhanced monitoring
-- **IoT devices**: Quarantine suspicious activity with custom scripts
-- **Development subnets**: Allow external API access for testing
+**📖 For detailed configuration, see:** [docs/per-client-scripts.md](docs/per-client-scripts.md)
 
 ## IP and Domain Blacklisting
 
-dfirewall supports comprehensive blacklisting of malicious IPs and domains using both Redis and file-based approaches for enhanced security.
+dfirewall supports comprehensive blacklisting of malicious IPs and domains using both Redis and file-based approaches.
 
-### Configuration
+**Key Features:**
+- **Dynamic Redis Blacklists**: Real-time updates via Redis commands
+- **Static File Blacklists**: Simple text file management
+- **Pattern Matching**: Wildcard and regex pattern support
+- **IPv4/IPv6 Support**: Complete IP address family coverage
+- **Web UI Management**: Add/remove entries via web interface
 
-Create a blacklist configuration file and set `BLACKLIST_CONFIG=/path/to/blacklist-config.json`:
+**Quick Setup:**
+```bash
+export BLACKLIST_CONFIG=/path/to/blacklist-config.json
+```
 
+**Example Configuration:**
 ```json
 {
-  "redis_ip_set": "dfirewall:blacklist:ips",
-  "redis_domain_set": "dfirewall:blacklist:domains", 
-  "ip_blacklist_file": "/config/blacklist-ips.txt",
-  "domain_blacklist_file": "/config/blacklist-domains.txt",
-  "block_on_match": true,
-  "log_only": false,
-  "refresh_interval": 300
+  "enabled": true,
+  "ip_blacklist": ["192.168.100.5", "10.0.0.0/8"],
+  "domain_blacklist": ["malware.example.com", "*.phishing.com"],
+  "use_redis_blacklist": true,
+  "redis_ip_key": "dfirewall:blacklist:ips",
+  "redis_domain_key": "dfirewall:blacklist:domains"
 }
 ```
 
-### Blacklist Types
-
-#### Redis-Based Blacklists
-- **Dynamic**: Updated in real-time via Redis commands
-- **Scalable**: Supports millions of entries with fast lookups
-- **Distributed**: Can be shared across multiple dfirewall instances
-- **Persistent**: Survives restarts with Redis persistence
-
-#### File-Based Blacklists  
-- **Static**: Loaded from text files on disk
-- **Simple**: Easy to manage with standard text editors
-- **Version Controlled**: Can be managed with git/svn
-- **Portable**: Easy to backup and transfer
-
-### Blacklist File Format
-
-IP blacklist file (`blacklist-ips.txt`):
-```
-# Comments start with #
-192.0.2.1
-203.0.113.5
-198.51.100.10
-```
-
-Domain blacklist file (`blacklist-domains.txt`):
-```
-# Comments start with #
-evil-site.com
-malicious-domain.net
-phishing-example.org
-```
-
-### Behavior Options
-
-- **`block_on_match: true`**: Block DNS resolution for blacklisted entries
-- **`log_only: true`**: Only log matches without blocking (audit mode)
-- **`refresh_interval`**: How often to reload file-based blacklists (seconds)
-
-### Domain Blocking Features
-
-- **Case-insensitive matching**: Domains converted to lowercase
-- **Parent domain blocking**: Blocking `evil.com` also blocks `sub.evil.com`
-- **Trailing dot handling**: Properly handles DNS trailing dots
-
-### IP Blocking Features
-
-- **IPv4 and IPv6 support**: Blocks both address types
-- **Exact matching**: Precise IP address matching
-- **Response filtering**: Removes blacklisted IPs from DNS responses
-
-### Management Tools
-
-Use the provided script to manage Redis blacklists:
-
-```bash
-# Add entries
-./scripts/manage_blacklists.sh add-ip 192.0.2.1
-./scripts/manage_blacklists.sh add-domain evil.com
-
-# Load from files
-./scripts/manage_blacklists.sh load-ips /path/to/ips.txt
-./scripts/manage_blacklists.sh load-domains /path/to/domains.txt
-
-# List entries
-./scripts/manage_blacklists.sh list-ips
-./scripts/manage_blacklists.sh list-domains
-
-# Show statistics
-./scripts/manage_blacklists.sh stats
-```
-
-### Integration with Threat Intelligence
-
-- **Automated feeds**: Script integration with threat intel APIs
-- **Commercial feeds**: Support for commercial blacklist providers
-- **Custom sources**: Easy integration with internal security tools
-- **Real-time updates**: Redis allows instant blacklist updates
-
-### Use Cases
-
-- **Malware blocking**: Block known C&C servers and malware domains
-- **Phishing protection**: Block phishing domains and IP addresses
-- **Corporate policy**: Block social media, gambling, or adult content
-- **Compliance**: Meet regulatory requirements for content filtering
-- **DDoS mitigation**: Block known attack sources proactively
+**📖 For detailed configuration, see:** [docs/blacklist-configuration.md](docs/blacklist-configuration.md)
 
 ## IP and Domain Reputation Checking
 
-dfirewall integrates with leading threat intelligence providers to automatically check IP addresses and domains against reputation databases in real-time.
+dfirewall integrates with leading threat intelligence providers for real-time security analysis.
 
-### Configuration
+**Supported Providers:**
+- **VirusTotal**: Multi-engine threat intelligence analysis
+- **AbuseIPDB**: Community-driven IP abuse reporting
+- **URLVoid**: Multi-vendor domain reputation checking
+- **Custom APIs**: Flexible integration with any REST-based threat intelligence
 
-Create a reputation configuration file and set `REPUTATION_CONFIG=/path/to/reputation-config.json`:
+**Key Features:**
+- Real-time reputation checking before DNS resolution
+- Configurable threat score thresholds  
+- Intelligent caching to reduce API costs
+- Rate limiting to respect provider quotas
+- Comprehensive logging and monitoring
 
+**Quick Setup:**
+```bash
+export REPUTATION_CONFIG=/path/to/reputation-config.json
+```
+
+**📖 For detailed configuration, see:** [docs/ai-and-reputation.md](docs/ai-and-reputation.md)
+
+## AI-Powered Threat Detection
+
+dfirewall integrates cutting-edge AI technology for advanced threat detection and analysis.
+
+**Supported AI Providers:**
+- **OpenAI GPT Models**: Advanced reasoning and threat analysis
+- **Anthropic Claude**: Security-focused analytical capabilities  
+- **Local AI Models**: Privacy-first offline operation
+
+**AI-Powered Features:**
+- **Domain Analysis**: Intelligent malware and phishing detection
+- **Traffic Anomaly Detection**: Behavioral analysis of DNS patterns
+- **Proactive Threat Hunting**: Zero-day and APT identification
+- **DGA Recognition**: Domain Generation Algorithm detection
+
+**Quick Setup:**
+```bash
+export AI_CONFIG=/path/to/ai-config.json
+```
+
+**Example Configuration:**
 ```json
 {
-  "version": "1.0",
-  "cache_ttl": 3600,
+  "enabled": true,
+  "provider": "openai",
+  "api_key": "your_openai_api_key",
+  "model": "gpt-4",
+  "domain_analysis": true,
+  "traffic_anomalies": true,
+  "min_confidence": 0.8
+}
+```
+
+**📖 For detailed configuration, see:** [docs/ai-and-reputation.md](docs/ai-and-reputation.md)
   "checkers": [
     {
       "name": "virustotal_ip",
@@ -1259,3 +1281,8 @@ fi
 - ~~add support for checking IP and/or domain against common reputation checkers~~ ✅ **Completed** - Added integration with VirusTotal, AbuseIPDB, URLVoid, and custom reputation services
 - ~~AI integration~~ ✅ **Completed** - Added comprehensive AI-powered threat detection with domain analysis, traffic anomaly detection, and proactive threat hunting :D
 - ~~add support for checking IP and/or domain by executing user-provided pass/fail script~~ ✅ **Completed** - Added comprehensive custom script integration with unified/separate scripts, caching, retry logic, and extensive configuration options
+- Please add functionality to the Web UI to add an IP or a domain to the Redis blacklist immediately
+- Please add Web UI functionality to perform reputation checking and AI detection for an IP or a domain ad hoc
+- Please expose all Web UI actions as REST API
+- Add TLS certificate and password authentication capability to Redis
+- Add Web UI HTTPS, Password, and LDAP authentication support
