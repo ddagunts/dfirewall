@@ -461,19 +461,3 @@ dfirewall supports user-provided pass/fail scripts for custom domain and IP vali
 
 **📖 For detailed configuration, see:** [docs/ai-and-reputation.md](docs/ai-and-reputation.md) (Custom Script section)
 
-# ToDo
-- ~~fix EDNS handling~~ ✅ **Completed** - Fixed EDNS Client Subnet with IPv4/IPv6 support and proper validation
-- ~~add support for handling all IPs in a response (rather than selecting first IP only)~~ ✅ **Completed** - Added `HANDLE_ALL_IPS` environment variable option
-- ~~add AAAA records (IPv6 support)~~ ✅ **Completed** - Added AAAA record processing for IPv6 addresses
-- ~~add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)~~ ✅ **Completed** - Added `EXPIRE_SCRIPT` with Redis keyspace notifications monitoring
-- ~~add UI for viewing rules~~ ✅ **Completed** - Added web-based UI with rule viewing, statistics, and management features
-- ~~add better configuration options (invoke custom script(s) per client (if exist), etc)~~ ✅ **Completed** - Added JSON-based per-client script configuration with pattern matching
-- ~~add support for checking IP and/or domain against blacklist in Redis (or file)~~ ✅ **Completed** - Added comprehensive Redis and file-based IP/domain blacklisting
-- ~~add support for checking IP and/or domain against common reputation checkers~~ ✅ **Completed** - Added integration with VirusTotal, AbuseIPDB, URLVoid, and custom reputation services
-- ~~AI integration~~ ✅ **Completed** - Added comprehensive AI-powered threat detection with domain analysis, traffic anomaly detection, and proactive threat hunting :D
-- ~~add support for checking IP and/or domain by executing user-provided pass/fail script~~ ✅ **Completed** - Added comprehensive custom script integration with unified/separate scripts, caching, retry logic, and extensive configuration options
-- Please add functionality to the Web UI to add an IP or a domain to the Redis blacklist immediately
-- Please add Web UI functionality to perform reputation checking and AI detection for an IP or a domain ad hoc
-- Please expose all Web UI actions as REST API
-- Add TLS certificate and password authentication capability to Redis
-- Add Web UI HTTPS, Password, and LDAP authentication support

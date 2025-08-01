@@ -3,17 +3,17 @@
 # Generic expire script for non-Linux/non-ipset platforms
 # This script is called when Redis keys expire, allowing cleanup of firewall rules
 # Environment variables provided by dfirewall:
-#   CLIENT_IP    - The client IP that requested the DNS resolution
-#   RESOLVED_IP  - The IP address that was resolved
-#   DOMAIN       - The domain name that was resolved
-#   TTL          - Always "0" for expired keys
-#   ACTION       - Always "EXPIRE" for expiration events
+#   DFIREWALL_CLIENT_IP    - The client IP that requested the DNS resolution
+#   DFIREWALL_RESOLVED_IP  - The IP address that was resolved
+#   DFIREWALL_DOMAIN       - The domain name that was resolved
+#   DFIREWALL_TTL          - Always "0" for expired keys
+#   DFIREWALL_ACTION       - Always "EXPIRE" for expiration events
 
 # ASSUMPTION: Log all expiration events for debugging and monitoring
-echo "$(date): Key expired - Client: $CLIENT_IP, Resolved: $RESOLVED_IP, Domain: $DOMAIN"
+echo "$(date): Key expired - Client: $DFIREWALL_CLIENT_IP, Resolved: $DFIREWALL_RESOLVED_IP, Domain: $DFIREWALL_DOMAIN"
 
 # Remove IP from relevant ipset
-ipset del "$CLIENT_IP" "$RESOLVED_IP" -exist
+ipset del "$DFIREWALL_CLIENT_IP" "$DFIREWALL_RESOLVED_IP" -exist
 
 # EXAMPLE: For platforms with different firewall systems
 # Uncomment and modify the appropriate section below:
@@ -50,4 +50,4 @@ ipset del "$CLIENT_IP" "$RESOLVED_IP" -exist
 #     --port 443 \
 #     --cidr $RESOLVED_IP/32
 
-echo "Expire script completed for $RESOLVED_IP (client: $CLIENT_IP, domain: $DOMAIN)"
+echo "Expire script completed for $DFIREWALL_RESOLVED_IP (client: $DFIREWALL_CLIENT_IP, domain: $DFIREWALL_DOMAIN)"
