@@ -2686,13 +2686,15 @@ func Register(rt Route) error {
 				// msg.Payload contains the expired key name
 				expiredKey := msg.Payload
 				
-				// ASSUMPTION: Only process our firewall rule keys (format: "rules:client:ip:domain")
+				// ASSUMPTION: Only process our firewall rule keys (format: "rules:client|ip|domain")
 				if strings.HasPrefix(expiredKey, "rules:") {
-					parts := strings.Split(expiredKey, ":")
-					if len(parts) >= 4 {
-						clientIP := parts[1]
-						resolvedIP := parts[2]
-						domain := strings.Join(parts[3:], ":") // domain might contain colons
+					// Remove "rules:" prefix and split on pipe (IPv6-safe)
+					keyContent := strings.TrimPrefix(expiredKey, "rules:")
+					parts := strings.Split(keyContent, "|")
+					if len(parts) == 3 {
+						clientIP := parts[0]
+						resolvedIP := parts[1]
+						domain := parts[2]
 						
 						// QUESTION: Should we validate IPs here or trust Redis key format?
 						// ASSUMPTION: Trust Redis key format since we control key creation
@@ -3043,7 +3045,7 @@ func Register(rt Route) error {
 					return // continue processing other IPs instead of failing entire request
 				}
 				
-				key := "rules:" + from + ":" + targetIP.String() + ":" + domain
+				key := "rules:" + from + "|" + targetIP.String() + "|" + domain
 				
 				// FEATURE: AI-powered traffic pattern collection :D
 				if aiConfig != nil && aiConfig.Enabled && aiConfig.TrafficAnomaly {
@@ -3314,15 +3316,21 @@ func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 	var rules []FirewallRule
 	
 	for _, key := range keys {
-		// Parse key format: "rules:client:ip:domain"
-		parts := strings.Split(key, ":")
-		if len(parts) < 4 {
+		// Parse key format: "rules:client|ip|domain" (using pipe to avoid IPv6 colon conflicts)
+		if !strings.HasPrefix(key, "rules:") {
+			continue // Skip non-rule keys
+		}
+		
+		// Remove "rules:" prefix and split on pipe
+		keyContent := strings.TrimPrefix(key, "rules:")
+		parts := strings.Split(keyContent, "|")
+		if len(parts) != 3 {
 			continue // Skip malformed keys
 		}
 		
-		clientIP := parts[1]
-		resolvedIP := parts[2]
-		domain := strings.Join(parts[3:], ":") // Domain might contain colons
+		clientIP := parts[0]
+		resolvedIP := parts[1]
+		domain := parts[2]
 		
 		// Get TTL
 		ttl, err := redisClient.TTL(ctx, key).Result()
@@ -3377,14 +3385,21 @@ func handleAPIStats(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 	resolvedIPs := make(map[string]bool)
 	
 	for _, key := range keys {
-		parts := strings.Split(key, ":")
-		if len(parts) < 4 {
-			continue
+		// Parse key format: "rules:client|ip|domain" (using pipe to avoid IPv6 colon conflicts)
+		if !strings.HasPrefix(key, "rules:") {
+			continue // Skip non-rule keys
 		}
 		
-		clientIP := parts[1]
-		resolvedIP := parts[2]
-		domain := strings.Join(parts[3:], ":")
+		// Remove "rules:" prefix and split on pipe
+		keyContent := strings.TrimPrefix(key, "rules:")
+		parts := strings.Split(keyContent, "|")
+		if len(parts) != 3 {
+			continue // Skip malformed keys
+		}
+		
+		clientIP := parts[0]
+		resolvedIP := parts[1]
+		domain := parts[2]
 		
 		clientIPs[clientIP] = true
 		resolvedIPs[resolvedIP] = true
