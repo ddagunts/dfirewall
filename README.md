@@ -259,8 +259,8 @@ Chain OUTPUT (policy ACCEPT)
 target     prot opt source               destination
 ```
 You can also look at the web interface at http://192.168.21.1:8080
-You can also manually delete rules from the web ui (TODO: add button to also add domain to blacklist in Redis) 
-<img width="1296" height="884" alt="Screenshot 2025-07-30 at 22 20 45" src="https://github.com/user-attachments/assets/16bb2eb0-ded8-4b04-a00d-f7f21325a8dd" />
+You can also manually delete rules from the web ui (TODO: add button to also add domain to blacklist in Redis)
+<img width="1476" height="1268" alt="Screenshot from 2025-08-01 09-16-27" src="https://github.com/user-attachments/assets/2bd3206d-cc91-4bb6-b727-56ad53520b49" />
 
 
 This example configuration has domain blacklisting via Redis enabled you can experiment with
