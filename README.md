@@ -211,19 +211,38 @@ Now your Debian machine should be a router
 # Testing
 Connect a **new** client to the LAN, (or otherwise ensure clean DNS cache on the client), open some app to generate network traffic.  You should see some logs from dfirewall container.
 ```
-root@debian:~/dfirewall# docker-compose logs --tail 5 dfirewall
+root@debian:~/dfirewall# docker-compose logs -f dfirewall 
 Attaching to dfirewall
-dfirewall    | 2025/07/30 03:01:37 Add 3.33.252.61 for 192.168.21.180, e16.whatsapp.net. 9m22s
-dfirewall    | 2025/07/30 03:01:38 Add 157.240.229.60 for 192.168.21.180, graph.whatsapp.com. 53s
-dfirewall    | 2025/07/30 03:01:38 Add 31.13.66.56 for 192.168.21.180, mmg.whatsapp.net. 59s
-dfirewall    | 2025/07/30 03:15:06 Add 76.223.92.165 for 192.168.21.180, chat.signal.org. 4m11s
-dfirewall    | 2025/07/30 03:15:07 Add 172.253.122.121 for 192.168.21.180, storage.signal.org. 31s
+dfirewall    | 2025/08/01 14:29:48 listening on port 53, set PORT env var to change
+dfirewall    | 2025/08/01 14:29:48 INVOKE_SCRIPT is set to /scripts/invoke_linux_ipset.sh
+dfirewall    | 2025/08/01 14:29:48 INVOKE_ALWAYS is set, executing INVOKE script for every matching request
+dfirewall    | 2025/08/01 14:29:48 EXPIRE_SCRIPT is set to /scripts/expire_generic.sh
+dfirewall    | 2025/08/01 14:29:48 WEB_UI_PORT is set to 8080
+dfirewall    | 2025/08/01 14:29:48 SCRIPT_CONFIG env var not set, using environment variables for script configuration
+dfirewall    | 2025/08/01 14:29:48 Loaded blacklist configuration: Redis IP key=dfirewall:blacklist:ips, Redis domain key=dfirewall:blacklist:domains, IP file=, domain file=
+dfirewall    | 2025/08/01 14:29:48 BLACKLIST_CONFIG loaded from /config/blacklist-config.example.json
+dfirewall    | 2025/08/01 14:29:48 REPUTATION_CONFIG env var not set, reputation checking disabled
+dfirewall    | 2025/08/01 14:29:48 AI_CONFIG env var not set, AI features disabled
+dfirewall    | 2025/08/01 14:29:48 CUSTOM_SCRIPT_CONFIG env var not set, custom script validation disabled
+dfirewall    | 2025/08/01 14:29:48 Connected to Redis at 127.0.0.1:6379
+dfirewall    | 2025/08/01 14:29:48 Redis connection succeeded
+dfirewall    | 2025/08/01 14:29:48 Redis IP blacklist key 'dfirewall:blacklist:ips' ready for use (will be created on first addition)
+dfirewall    | 2025/08/01 14:29:48 Redis domain blacklist key 'dfirewall:blacklist:domains' ready for use (will be created on first addition)
+dfirewall    | 2025/08/01 14:29:48 Started blacklist refresh background task (interval: 30 seconds)
+dfirewall    | 2025/08/01 14:29:48 Enabled Redis keyspace notifications for key expiration events
+dfirewall    | 2025/08/01 14:29:48 dfirewall started
+dfirewall    | 2025/08/01 14:29:48 Auth config loaded - HTTPS: false, Password: false, LDAP: false, Header: false
+dfirewall    | 2025/08/01 14:29:48 Starting web UI server on port 8080 (HTTPS: false, Auth: false)
+dfirewall    | 2025/08/01 14:29:48 Started Redis expiration watchdog, monitoring key expiration events
+dfirewall    | 2025/08/01 14:29:48 EXPIRE_SCRIPT is set to: /scripts/expire_generic.sh
+dfirewall    | 2025/08/01 14:30:36 Key expired: rules:192.168.21.141|104.16.185.241|icanhazip.com. (client=192.168.21.141, resolved=104.16.185.241, domain=icanhazip.com.)
+dfirewall    | 2025/08/01 14:30:36 Key expired: rules:192.168.21.141|104.16.184.241|icanhazip.com. (client=192.168.21.141, resolved=104.16.184.241, domain=icanhazip.com.)
 ```
 You should see clients, IPs resolved, and domains looked up in Redis
 ```
 root@debian:~/dfirewall# docker exec -it redis redis-cli keys '*'
-1) "rules:192.168.21.180:76.223.92.165:chat.signal.org."
-2) "rules:192.168.21.180:172.253.122.121:storage.signal.org."
+ 1) "rules:192.168.21.142|185.199.109.133|raw.githubusercontent.com."
+ 2) "rules:192.168.21.141|96.7.128.186|example.org."
 ```
 You should see ipsets on the host being populated by the container.  Note that the second Signal IP (172.253.122.121) had a low TTL of 31s and expired out of the list already
 ```
