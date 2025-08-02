@@ -3,7 +3,7 @@ module github.com/ddagunts/dfirewall
 go 1.24
 
 require (
-	github.com/dgrijalva/jwt-go v3.2.0+incompatible
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/go-ldap/ldap/v3 v3.4.8
 	github.com/miekg/dns v1.1.67
 	golang.org/x/crypto v0.38.0

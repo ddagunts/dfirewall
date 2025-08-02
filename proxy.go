@@ -753,32 +753,12 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 			log.Printf("Executing script: %s %s %s %s %s %s", scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
 		}
 		
-		// Create command with arguments
-		cmd := exec.Command(scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
-		
-		// Set environment variables (start with minimal base environment)
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-		if environment != nil {
-			for key, value := range environment {
-				cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
-			}
-		}
-		
-		// Add standard dfirewall environment variables
-		cmd.Env = append(cmd.Env,
-			fmt.Sprintf("DFIREWALL_CLIENT_IP=%s", clientIP),
-			fmt.Sprintf("DFIREWALL_RESOLVED_IP=%s", resolvedIP),
-			fmt.Sprintf("DFIREWALL_DOMAIN=%s", domain),
-			fmt.Sprintf("DFIREWALL_TTL=%s", ttl),
-			fmt.Sprintf("DFIREWALL_ACTION=%s", action),
-		)
-		
 		// Execute with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		
-		// Set the context for the command
-		cmd = exec.CommandContext(ctx, scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
+		// Create command with context and arguments
+		cmd := exec.CommandContext(ctx, scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
 		
 		// Set environment variables (start with minimal base environment)
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}

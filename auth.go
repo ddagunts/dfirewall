@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -40,7 +40,7 @@ type Session struct {
 
 type Claims struct {
 	Username string `json:"username"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
 // loadAuthConfig loads authentication configuration from file or environment
@@ -281,7 +281,7 @@ func checkSessionAuth(r *http.Request) (string, bool) {
 	}
 	
 	// Check if session has expired
-	if time.Now().After(time.Unix(claims.ExpiresAt, 0)) {
+	if claims.ExpiresAt != nil && time.Now().After(claims.ExpiresAt.Time) {
 		return "", false
 	}
 	
@@ -371,8 +371,8 @@ func createSession(username string) (string, error) {
 	expirationTime := time.Now().Add(sessionManager.expiry)
 	claims := &Claims{
 		Username: username,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expirationTime.Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
 	}
 	
