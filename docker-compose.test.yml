@@ -1,0 +1,45 @@
+services:
+  redis-test:
+    image: redis:7.2-alpine
+    container_name: redis-test
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    command: ["redis-server"]
+    ports:
+      - 127.0.0.1:6380:6379  # Use different port to avoid conflicts
+    tmpfs:
+      - /data:rw,size=100M,mode=1777  # Use tmpfs for faster test performance
+  
+  dfirewall-test:
+    depends_on:
+      redis-test:
+        condition: service_healthy
+    container_name: dfirewall-test
+    build: .
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    # Security hardening for test environment
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=100M,mode=1777
+      - /dev/shm:rw,size=100M,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - "UPSTREAM=1.1.1.1:53"
+      - "REDIS=redis://127.0.0.1:6380"  # Point to test Redis on port 6380
+      - "ENABLE_EDNS=1"
+      - "DEBUG=1"  # Enable debug mode for testing
+      - "INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh"
+      - "EXPIRE_SCRIPT=/scripts/expire_generic.sh"
+      - "WEB_UI_PORT=8081"  # Use different port for test web UI
+      - "INVOKE_ALWAYS=1"
+      - "HANDLE_ALL_IPS=1"
+    hostname: "dfirewall-test"
+    image: "dfirewall:test"
+    user: root
