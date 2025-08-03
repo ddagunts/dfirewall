@@ -32,9 +32,9 @@ DEBUG=true                  # enable verbose logging
 ```
 # Setup on Linux
 
-dfirewall can be deployed as a network router with firewall capabilities on Linux systems.
+dfirewall can be deployed as a network router with firewall capabilities.  The easiest platform to do this on is Linux thanks to ipset.
 
-**📖 For complete step-by-step setup instructions, see:** [docs/linux-setup.md](docs/linux-setup.md)
+**📖 For a quick-start demo setup on Linux see:** [docs/linux-setup.md](docs/linux-setup.md)
 
 ## Redis Key Expiration Monitoring (for non-Linux/non-ipset support)
 
