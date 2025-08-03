@@ -455,9 +455,3 @@ dfirewall integrates AI technology (OpenAI, Claude, local models) for domain ana
 
 **📖 For detailed configuration, see:** [docs/ai-and-reputation.md](docs/ai-and-reputation.md)
 
-## Custom Script Integration
-
-dfirewall supports user-provided pass/fail scripts for custom domain and IP validation with unified/separate scripts, caching, and extensive configuration options.
-
-**📖 For detailed configuration, see:** [docs/ai-and-reputation.md](docs/ai-and-reputation.md) (Custom Script section)
-
