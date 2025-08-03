@@ -496,16 +496,21 @@ func TestAPIInputSanitization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simple sanitization function
-			sanitize := func(input string) string {
-				return sanitizeForShell(input)
+			// Input validation function - reject invalid inputs
+			validate := func(input string, inputType string) bool {
+				return validateScriptInput(input, inputType) == nil
 			}
 
-			// Apply sanitization
+			// Apply validation - reject invalid inputs
 			result := make(map[string]interface{})
 			for key, value := range tt.input {
 				if str, ok := value.(string); ok {
-					result[key] = sanitize(str)
+					// Use validation instead of sanitization
+					if validate(str, "domain") || validate(str, "ip") {
+						result[key] = str
+					} else {
+						result[key] = ""  // Invalid input rejected
+					}
 				} else {
 					result[key] = value
 				}

@@ -3,10 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -502,7 +501,7 @@ func (m *SSHMonitor) createKeyAuth() (ssh.AuthMethod, error) {
 
 // createKnownHostsCallback creates host key verification callback from known_hosts file
 func createKnownHostsCallback(knownHostsFile string) (ssh.HostKeyCallback, error) {
-	return ssh.ReadKnownHostsFile(knownHostsFile)
+	return knownhosts.New(knownHostsFile)
 }
 
 // createFingerprintCallback creates host key verification callback from fingerprint

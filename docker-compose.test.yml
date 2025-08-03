@@ -43,3 +43,4 @@ services:
     hostname: "dfirewall-test"
     image: "dfirewall:test"
     user: root
+

@@ -1912,9 +1912,89 @@ func checkDomainBlacklist(domain string, redisClient *redis.Client) bool {
 	return false
 }
 
-// sanitizeForShell removes any shell metacharacters for security
-func sanitizeForShell(input string) string {
-	return regexp.MustCompile(`[^a-zA-Z0-9\._\-]`).ReplaceAllString(input, "")
+// validateScriptInput validates input parameters for script execution
+func validateScriptInput(input string, inputType string) error {
+	if input == "" {
+		return fmt.Errorf("empty %s not allowed", inputType)
+	}
+	
+	// Check maximum length to prevent buffer overflow attacks
+	if len(input) > 255 {
+		return fmt.Errorf("%s exceeds maximum length of 255 characters", inputType)
+	}
+	
+	switch inputType {
+	case "ip":
+		return validateIPAddress(input)
+	case "domain":
+		return validateDomainName(input)
+	case "ttl":
+		return validateTTLString(input)
+	case "action":
+		return validateAction(input)
+	default:
+		return fmt.Errorf("unknown input type: %s", inputType)
+	}
+}
+
+// validateIPAddress validates IPv4 and IPv6 addresses
+func validateIPAddress(ip string) error {
+	if net.ParseIP(ip) == nil {
+		return fmt.Errorf("invalid IP address: %s", ip)
+	}
+	return nil
+}
+
+// validateDomainName validates DNS domain names according to RFC standards
+func validateDomainName(domain string) error {
+	// Remove trailing dot if present (valid in DNS)
+	domain = strings.TrimSuffix(domain, ".")
+	
+	if len(domain) == 0 || len(domain) > 253 {
+		return fmt.Errorf("invalid domain length: %s", domain)
+	}
+	
+	// Check for valid domain name pattern
+	domainRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$`)
+	if !domainRegex.MatchString(domain) {
+		return fmt.Errorf("invalid domain format: %s", domain)
+	}
+	
+	// Check each label
+	labels := strings.Split(domain, ".")
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 {
+			return fmt.Errorf("invalid domain label length in: %s", domain)
+		}
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return fmt.Errorf("domain label cannot start or end with hyphen: %s", domain)
+		}
+	}
+	
+	return nil
+}
+
+// validateTTLString validates TTL string values
+func validateTTLString(ttl string) error {
+	ttlRegex := regexp.MustCompile(`^[0-9]+$`)
+	if !ttlRegex.MatchString(ttl) {
+		return fmt.Errorf("invalid TTL format: %s", ttl)
+	}
+	return nil
+}
+
+// validateAction validates action parameters
+func validateAction(action string) error {
+	validActions := map[string]bool{
+		"ALLOW":  true,
+		"DENY":   true,
+		"EXPIRE": true,
+	}
+	
+	if !validActions[action] {
+		return fmt.Errorf("invalid action: %s", action)
+	}
+	return nil
 }
 
 // validateInvokeScript validates script paths for security

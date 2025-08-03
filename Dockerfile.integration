@@ -1,0 +1,48 @@
+FROM golang:1.24 as integration-test
+
+WORKDIR /app
+
+# Install dependencies for testing
+RUN apt-get update && apt-get install -y \
+    redis-tools \
+    netcat-openbsd \
+    curl \
+    iproute2 \
+    iptables \
+    ipset \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy Go module files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy all source files except main programs
+COPY *_test.go ./
+COPY integration_test.go ./
+COPY redis_integration_test.go ./
+COPY webui_auth_integration_test.go ./
+COPY script_config_integration_test.go ./
+COPY security_integration_test.go ./
+COPY performance_integration_test.go ./
+COPY validation_chain_integration_test.go ./
+COPY run_integration_tests.go ./
+
+# Copy non-main Go files
+COPY types.go proxy.go auth.go api.go redis.go ssh_log_monitor.go ./
+
+# Ensure module is up to date
+RUN go mod tidy
+
+# Set environment variables for testing
+ENV REDIS=redis://127.0.0.1:6380
+ENV UPSTREAM=8.8.8.8:53
+ENV DEBUG=1
+ENV DFIREWALL_TEST_MODE=1
+
+# Create script directories and test scripts
+RUN mkdir -p /scripts /tmp/test_scripts && \
+    echo '#!/bin/bash\necho "Test script executed: $*"' > /tmp/test_scripts/test_script.sh && \
+    chmod +x /tmp/test_scripts/test_script.sh
+
+# Default command runs integration tests
+CMD ["go", "test", "-v", "./..."]

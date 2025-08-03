@@ -9,7 +9,8 @@ copy *.go ./
 run go mod tidy
 
 # Run tests to ensure code quality
-#run go test -v ./...
+# Tests are skipped in build for now - run separately with docker-compose test
+# run go test -v ./...
 
 run CGO_ENABLED=0 GOOS=linux go build -o /dfirewall
 

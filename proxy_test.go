@@ -305,17 +305,33 @@ done
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Sanitize inputs as done in executeScript
-			safeClientIP := sanitizeForShell(tt.clientIP)
-			safeResolvedIP := sanitizeForShell(tt.resolvedIP)
-			safeDomain := sanitizeForShell(tt.domain)
-			safeTTL := sanitizeForShell(tt.ttl)
-			safeAction := sanitizeForShell(tt.action)
+			// Validate inputs as done in executeScript
+			if err := validateScriptInput(tt.clientIP, "ip"); err != nil {
+				t.Logf("Invalid client IP would be rejected: %v", err)
+				return // Script execution would be blocked
+			}
+			if err := validateScriptInput(tt.resolvedIP, "ip"); err != nil {
+				t.Logf("Invalid resolved IP would be rejected: %v", err)
+				return // Script execution would be blocked
+			}
+			if err := validateScriptInput(tt.domain, "domain"); err != nil {
+				t.Logf("Invalid domain would be rejected: %v", err)
+				return // Script execution would be blocked
+			}
+			if err := validateScriptInput(tt.ttl, "ttl"); err != nil {
+				t.Logf("Invalid TTL would be rejected: %v", err)
+				return // Script execution would be blocked
+			}
+			if err := validateScriptInput(tt.action, "action"); err != nil {
+				t.Logf("Invalid action would be rejected: %v", err)
+				return // Script execution would be blocked
+			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			cmd := exec.CommandContext(ctx, scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
+			// Use direct parameter passing as done in fixed executeScript
+			cmd := exec.CommandContext(ctx, scriptPath, tt.clientIP, tt.resolvedIP, tt.domain, tt.ttl, tt.action)
 			cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 
 			output, err := cmd.Output()

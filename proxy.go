@@ -764,23 +764,38 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 	
 	// Execute script in background to avoid blocking DNS responses
 	go func() {
-		// Sanitize inputs for security
-		safeClientIP := sanitizeForShell(clientIP)
-		safeResolvedIP := sanitizeForShell(resolvedIP)
-		safeDomain := sanitizeForShell(domain)
-		safeTTL := sanitizeForShell(ttl)
-		safeAction := sanitizeForShell(action)
+		// Validate all inputs before script execution
+		if err := validateScriptInput(clientIP, "ip"); err != nil {
+			log.Printf("Script execution blocked - invalid client IP: %v", err)
+			return
+		}
+		if err := validateScriptInput(resolvedIP, "ip"); err != nil {
+			log.Printf("Script execution blocked - invalid resolved IP: %v", err)
+			return
+		}
+		if err := validateScriptInput(domain, "domain"); err != nil {
+			log.Printf("Script execution blocked - invalid domain: %v", err)
+			return
+		}
+		if err := validateScriptInput(ttl, "ttl"); err != nil {
+			log.Printf("Script execution blocked - invalid TTL: %v", err)
+			return
+		}
+		if err := validateScriptInput(action, "action"); err != nil {
+			log.Printf("Script execution blocked - invalid action: %v", err)
+			return
+		}
 		
 		if os.Getenv("DEBUG") != "" {
-			log.Printf("Executing script: %s %s %s %s %s %s", scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
+			log.Printf("Executing script: %s with validated arguments", scriptPath)
 		}
 		
 		// Execute with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		
-		// Create command with context and arguments
-		cmd := exec.CommandContext(ctx, scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
+		// Create command with context - use direct parameter passing to avoid shell injection
+		cmd := exec.CommandContext(ctx, scriptPath, clientIP, resolvedIP, domain, ttl, action)
 		
 		// Set environment variables (start with minimal base environment)
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
