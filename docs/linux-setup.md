@@ -1,10 +1,8 @@
-# Linux Setup Guide
+# Setup on Linux
 
-This document provides step-by-step instructions for setting up dfirewall on a Linux system as a network router with firewall capabilities.
+Start with a minimal Debian install
 
-## Prerequisites
-
-Start with a minimal Debian install. The example instructions assume that the machine:
+The example instructions assume that the machine:
 - has two network interfaces
 - WAN has a DHCP server willing to give you an IPv4 address
 - LAN is using 192.168.21.0/24 subnet
@@ -12,13 +10,12 @@ Start with a minimal Debian install. The example instructions assume that the ma
 - WAN interface name is "enp2s0f0.3"
 - LAN interface name is "ens9.31"
 
-**Note**: You will need to account at least for the interface names in your environment.
+You will need to account at least for the interface names
 
-## Step 1: Configure Network Interfaces
+1) Configure the network interfaces
 
-Use `/etc/network/interfaces` to configure your NICs. Here is an example:
-
-```bash
+Use `/etc/network/interfaces` to configure your NICs, here is my example:
+```
 auto lo
 iface lo inet loopback
 
@@ -30,18 +27,13 @@ iface ens9.31 inet static
   address 192.168.21.1/24
   netmask 255.255.255.0
 ```
-
-Restart networking to apply changes:
-```bash
-/etc/init.d/networking restart
-# Output: Restarting networking (via systemctl): networking.service.
+```
+# /etc/init.d/networking restart
+Restarting networking (via systemctl): networking.service.
 ```
 
-## Step 2: Enable IP Forwarding
-
-Enable IP forwarding and optionally disable IPv6 (IPv6 is now supported via AAAA records):
-
-```bash
+2) Enable IP forwarding and optionally disable IPv6 (IPv6 is now supported via AAAA records)
+```
 # Enable IP forwarding (required)
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/router.conf
 
@@ -52,38 +44,27 @@ echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/router.conf
 # Apply changes
 sysctl --system
 ```
-
-Verify interface configuration:
-```bash
-# Check WAN interface
-ip ad sh enp2s0f0.3
-# Expected output:
-# 4: enp2s0f0.3@enp2s0f0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
-#     link/ether c8:2a:14:0f:7c:9f brd ff:ff:ff:ff:ff:ff
-#     inet 192.168.3.137/24 brd 192.168.3.255 scope global dynamic enp2s0f0.3
-#        valid_lft 446sec preferred_lft 446sec
-
-# Check LAN interface
-ip ad sh ens9.31
-# Expected output:
-# 5: ens9.31@ens9: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
-#     link/ether 38:c9:86:13:f2:23 brd ff:ff:ff:ff:ff:ff
-#     inet 192.168.21.1/24 brd 192.168.21.255 scope global ens9.31
-#        valid_lft forever preferred_lft forever
+```
+# ip ad sh enp2s0f0.3
+4: enp2s0f0.3@enp2s0f0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+    link/ether c8:2a:14:0f:7c:9f brd ff:ff:ff:ff:ff:ff
+    inet 192.168.3.137/24 brd 192.168.3.255 scope global dynamic enp2s0f0.3
+       valid_lft 446sec preferred_lft 446sec
+# ip ad sh ens9.31
+5: ens9.31@ens9: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+    link/ether 38:c9:86:13:f2:23 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.21.1/24 brd 192.168.21.255 scope global ens9.31
+       valid_lft forever preferred_lft forever
+```
+Install packages we need for a firewall (iptables, ipset, and git to clone this)
+```
+# DEBIAN_FRONTEND=noninteractive apt -y install iptables ipset dnsmasq iptables-persistent git
 ```
 
-## Step 3: Install Required Packages
+# Enable NAT (starting with empty iptables ruleset)
 
-Install packages needed for firewall functionality:
-```bash
-DEBIAN_FRONTEND=noninteractive apt -y install iptables ipset dnsmasq iptables-persistent git
+Create iptables-persistent rules and restore them (**replace the WAN interface name**)
 ```
-
-## Step 4: Enable NAT (Network Address Translation)
-
-Create iptables-persistent rules and restore them (**replace the WAN interface name with your interface**):
-
-```bash
 cat > /etc/iptables/rules.v4 <<EOF
 *nat
 -A POSTROUTING -o enp2s0f0.3 -j MASQUERADE
@@ -98,49 +79,42 @@ COMMIT
 COMMIT
 EOF
 
-# Apply the rules
-iptables-restore < /etc/iptables/rules.v4
+# iptables-restore < /etc/iptables/rules.v4
 ```
-
-Verify the ruleset after loading:
-```bash
-iptables -L
-# Expected output:
-# Chain INPUT (policy ACCEPT)
-# target     prot opt source               destination         
-# ACCEPT     all  --  anywhere             anywhere            
-# ACCEPT     all  --  anywhere             anywhere             state RELATED,ESTABLISHED
-# DROP       all  --  anywhere             anywhere            
-# 
-# Chain FORWARD (policy ACCEPT)
-# target     prot opt source               destination         
-# 
-# Chain OUTPUT (policy ACCEPT)
-# target     prot opt source               destination         
-
-iptables -L -t nat
-# Expected output:
-# Chain PREROUTING (policy ACCEPT)
-# target     prot opt source               destination         
-# 
-# Chain INPUT (policy ACCEPT)
-# target     prot opt source               destination         
-# 
-# Chain OUTPUT (policy ACCEPT)
-# target     prot opt source               destination         
-# 
-# Chain POSTROUTING (policy ACCEPT)
-# target     prot opt source               destination         
-# MASQUERADE  all  --  anywhere             anywhere           
+Ruleset after loading rules:
 ```
+# iptables -L 
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination         
+ACCEPT     all  --  anywhere             anywhere            
+ACCEPT     all  --  anywhere             anywhere             state RELATED,ESTABLISHED
+DROP       all  --  anywhere             anywhere            
 
-## Step 5: Start DHCP Server
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination         
 
-Setup dnsmasq as a DHCP server for the LAN (**replace LAN interface name with your interface**):
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination         
+#  iptables -L -t nat
+Chain PREROUTING (policy ACCEPT)
+target     prot opt source               destination         
 
-```bash
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination         
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination         
+
+Chain POSTROUTING (policy ACCEPT)
+target     prot opt source               destination         
+MASQUERADE  all  --  anywhere             anywhere           
+```
+# Start DHCP server 
+(**replace LAN interface name with your interface**)
+```
+# setup dnsmasq as a DHCP server for the LAN
 cat > /etc/dnsmasq.conf <<EOF
-interface=ens9.31 # edit this to match your LAN interface
+interface=ens9.31 # edit this
 listen-address=127.0.0.1
 port=0
 domain=lan
@@ -148,136 +122,176 @@ dhcp-range=192.168.21.100,192.168.21.200,1h
 dhcp-option=option:dns-server,192.168.21.1
 EOF
 ```
+```
+#  systemctl enable dnsmasq.service && systemctl restart dnsmasq.service
+```
+Now your Debian machine should be a router
 
-Enable and start the service:
-```bash
-systemctl enable dnsmasq.service && systemctl restart dnsmasq.service
+# Install Docker, clone this repo, and run dfirewall
+```
+# mkdir /etc/docker
+# echo '{ "iptables": false }' > /etc/docker/daemon.json
+# apt -y install docker.io docker-compose --no-install-recommends
+# systemctl enable docker && systemctl start docker
+# git clone https://github.com/ddagunts/dfirewall 
+# cd dfirewall
+# docker-compose up -d
 ```
 
-At this point, your Debian machine should be functioning as a router.
+# Testing
+Connect a **new** client to the LAN, (or otherwise ensure clean DNS cache on the client), open some app to generate network traffic.  You should see some logs from dfirewall container.
+```
+root@debian:~/dfirewall# docker-compose logs -f dfirewall 
+Attaching to dfirewall
+dfirewall    | 2025/08/01 14:29:48 listening on port 53, set PORT env var to change
+dfirewall    | 2025/08/01 14:29:48 INVOKE_SCRIPT is set to /scripts/invoke_linux_ipset.sh
+dfirewall    | 2025/08/01 14:29:48 INVOKE_ALWAYS is set, executing INVOKE script for every matching request
+dfirewall    | 2025/08/01 14:29:48 EXPIRE_SCRIPT is set to /scripts/expire_generic.sh
+dfirewall    | 2025/08/01 14:29:48 WEB_UI_PORT is set to 8080
+dfirewall    | 2025/08/01 14:29:48 SCRIPT_CONFIG env var not set, using environment variables for script configuration
+dfirewall    | 2025/08/01 14:29:48 Loaded blacklist configuration: Redis IP key=dfirewall:blacklist:ips, Redis domain key=dfirewall:blacklist:domains, IP file=, domain file=
+dfirewall    | 2025/08/01 14:29:48 BLACKLIST_CONFIG loaded from /config/blacklist-config.example.json
+dfirewall    | 2025/08/01 14:29:48 REPUTATION_CONFIG env var not set, reputation checking disabled
+dfirewall    | 2025/08/01 14:29:48 AI_CONFIG env var not set, AI features disabled
+dfirewall    | 2025/08/01 14:29:48 CUSTOM_SCRIPT_CONFIG env var not set, custom script validation disabled
+dfirewall    | 2025/08/01 14:29:48 Connected to Redis at 127.0.0.1:6379
+dfirewall    | 2025/08/01 14:29:48 Redis connection succeeded
+dfirewall    | 2025/08/01 14:29:48 Redis IP blacklist key 'dfirewall:blacklist:ips' ready for use (will be created on first addition)
+dfirewall    | 2025/08/01 14:29:48 Redis domain blacklist key 'dfirewall:blacklist:domains' ready for use (will be created on first addition)
+dfirewall    | 2025/08/01 14:29:48 Started blacklist refresh background task (interval: 30 seconds)
+dfirewall    | 2025/08/01 14:29:48 Enabled Redis keyspace notifications for key expiration events
+dfirewall    | 2025/08/01 14:29:48 dfirewall started
+dfirewall    | 2025/08/01 14:29:48 Auth config loaded - HTTPS: false, Password: false, LDAP: false, Header: false
+dfirewall    | 2025/08/01 14:29:48 Starting web UI server on port 8080 (HTTPS: false, Auth: false)
+dfirewall    | 2025/08/01 14:29:48 Started Redis expiration watchdog, monitoring key expiration events
+dfirewall    | 2025/08/01 14:29:48 EXPIRE_SCRIPT is set to: /scripts/expire_generic.sh
+dfirewall    | 2025/08/01 14:30:36 Key expired: rules:192.168.21.141|104.16.185.241|icanhazip.com. (client=192.168.21.141, resolved=104.16.185.241, domain=icanhazip.com.)
+dfirewall    | 2025/08/01 14:30:36 Key expired: rules:192.168.21.141|104.16.184.241|icanhazip.com. (client=192.168.21.141, resolved=104.16.184.241, domain=icanhazip.com.)
+```
+You should see clients, IPs resolved, and domains looked up in Redis
+```
+root@debian:~/dfirewall# docker exec -it redis redis-cli keys '*'
+ 1) "rules:192.168.21.142|185.199.109.133|raw.githubusercontent.com."
+ 2) "rules:192.168.21.141|96.7.128.186|example.org."
+```
+You should see ipsets on the host being populated by the container.  Note that the second Signal IP (172.253.122.121) had a low TTL of 31s and expired out of the list already
+```
+# ipset list
+Name: 192.168.21.180
+Type: hash:net 
+Revision: 7  
+Header: family inet hashsize 1024 maxelem 65536 timeout 60 bucketsize 12 initval 0x928f08a1
+Size in memory: 5640
+References: 1
+Number of entries: 1
+Members:
+76.223.92.165 timeout 144
+```
+You should see two rules in iptables for every client on your LAN
+```
+# iptables -L
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+ACCEPT     all  --  anywhere             anywhere             
+ACCEPT     tcp  --  anywhere             anywhere             tcp dpt:ssh
+ACCEPT     all  --  anywhere             anywhere             state RELATED,ESTABLISHED
+DROP       all  --  anywhere             anywhere            
+ 
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination
+ACCEPT     all  --  192.168.21.180       anywhere             match-set 192.168.21.180 dst
+REJECT     all  --  192.168.21.180       anywhere             reject-with icmp-port-unreachable
+ACCEPT     all  --  192.168.21.158       anywhere             match-set 192.168.21.158 dst
+REJECT     all  --  192.168.21.158       anywhere             reject-with icmp-port-unreachable
 
-## Step 6: Install Docker and dfirewall
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+```
+You can also look at the web interface at http://192.168.21.1:8080
+You can also manually delete rules from the web ui (TODO: add button to also add domain to blacklist in Redis)
+<img width="1476" height="1268" alt="Screenshot from 2025-08-01 09-16-27" src="https://github.com/user-attachments/assets/2bd3206d-cc91-4bb6-b727-56ad53520b49" />
 
-### Install Docker
-```bash
-# Configure Docker to not interfere with iptables
-mkdir /etc/docker
-echo '{ "iptables": false }' > /etc/docker/daemon.json
 
-# Install Docker and Docker Compose
-apt -y install docker.io docker-compose --no-install-recommends
+This example configuration has domain blacklisting via Redis enabled you can experiment with
+```
+root@debian:~/dfirewall# docker exec -it dfirewall /scripts/manage_blacklists.sh 
+Usage: /scripts/manage_blacklists.sh <command> [arguments]
 
-# Enable and start Docker
-systemctl enable docker && systemctl start docker
+Commands:
+  add-ip <ip>              Add IP to blacklist
+  remove-ip <ip>           Remove IP from blacklist
+  add-domain <domain>      Add domain to blacklist
+  remove-domain <domain>   Remove domain from blacklist
+  list-ips                 List all blacklisted IPs
+  list-domains            List all blacklisted domains
+  load-ips <file>         Load IPs from file to Redis
+  load-domains <file>     Load domains from file to Redis
+  clear-ips               Clear all IP blacklists
+  clear-domains           Clear all domain blacklists
+  stats                   Show blacklist statistics
+
+Environment variables:
+  REDIS_HOST              Redis host (default: 127.0.0.1)
+  REDIS_PORT              Redis port (default: 6379)
+  IP_SET                  Redis set name for IPs (default: dfirewall:blacklist:ips)
+  DOMAIN_SET              Redis set name for domains (default: dfirewall:blacklist:domains)
+root@debian:~/dfirewall# docker exec -it dfirewall /scripts/manage_blacklists.sh list-domains
+Blacklisted domains:
+1) "www.google.com"
+root@debian:~/dfirewall# dig www.google.com @192.168.21.1
+
+; <<>> DiG 9.18.33-1~deb12u2-Debian <<>> www.google.com @192.168.21.1
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 32097
+;; flags: qr rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 0
+;; WARNING: recursion requested but not available
+
+;; QUESTION SECTION:
+;www.google.com.			IN	A
+
+;; Query time: 0 msec
+;; SERVER: 192.168.21.1#53(192.168.21.1) (UDP)
+;; WHEN: Wed Jul 30 22:14:29 EDT 2025
+;; MSG SIZE  rcvd: 32
 ```
 
-### Clone and Run dfirewall
-```bash
-# Clone the repository
-git clone https://github.com/ddagunts/dfirewall 
-cd dfirewall
+Install optional tools useful on a router
 
-# Start dfirewall with Docker Compose
-docker-compose up -d
+`apt -y install net-tools dnsutils netcat-openbsd tcpdump lsof htop iftop ldnsutils netdiscover --no-install-recommends`
+
+# Test from a client on the LAN
+Try to ping some IP (1.1.1.1), it should fail.  Then try to ping it by name (one.one.one.one).  Then try to ping it by IP again.  Ping by IP should work until the TTL in the ipset expires.
+```
+$ ping -c1 1.1.1.1
+PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.
+From 192.168.21.1 icmp_seq=1 Destination Port Unreachable
+
+--- 1.1.1.1 ping statistics ---
+1 packets transmitted, 0 received, +1 errors, 100% packet loss, time 0ms
+
+$ ping -c1 one.one.one.one
+PING one.one.one.one (1.1.1.1) 56(84) bytes of data.
+64 bytes from one.one.one.one (1.1.1.1): icmp_seq=1 ttl=58 time=8.34 ms
+
+--- one.one.one.one ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 8.342/8.342/8.342/0.000 ms
+
+$ ping -c1 1.1.1.1
+PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.
+64 bytes from 1.1.1.1: icmp_seq=1 ttl=58 time=70.0 ms
+
+--- 1.1.1.1 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 70.018/70.018/70.018/0.000 ms
+
 ```
 
-## Step 7: Testing the Setup
-
-Connect a **new** client to the LAN (or ensure clean DNS cache on the client), then open some app to generate network traffic. You should see logs from the dfirewall container:
-
-```bash
-docker-compose logs -f dfirewall
-# Expected output:
-# dfirewall    | 2025/08/01 14:29:48 listening on port 53, set PORT env var to change
-# dfirewall    | 2025/08/01 14:29:48 INVOKE_SCRIPT is set to /scripts/invoke_linux_ipset.sh
-# dfirewall    | 2025/08/01 14:29:48 INVOKE_ALWAYS is set, executing INVOKE script for every matching request
-# dfirewall    | 2025/08/01 14:29:48 EXPIRE_SCRIPT is set to /scripts/expire_generic.sh
-# dfirewall    | 2025/08/01 14:29:48 WEB_UI_PORT is set to 8080
-# dfirewall    | 2025/08/01 14:29:48 Connected to Redis at 127.0.0.1:6379
-# dfirewall    | 2025/08/01 14:29:48 dfirewall started
+# Notes about the example setup
+Note that it would be better not to insert an individual REJECT rule for each client (remove `iptables -C FORWARD -s $CLIENT_IP -j REJECT || iptables -I FORWARD -s $CLIENT_IP -j REJECT` line from `scripts/invoke_linux_ipset.sh`) and instead reject forwarded traffic by default:
 ```
-
-### Verify Redis Storage
-Check that clients, IPs, and domains are being stored in Redis:
-```bash
-docker exec -it redis redis-cli keys '*'
-# Expected output:
-# 1) "rules:192.168.21.142|185.199.109.133|raw.githubusercontent.com."
-# 2) "rules:192.168.21.141|96.7.128.186|example.org."
-```
-
-### Verify ipsets
-Check that ipsets are being populated on the host:
-```bash
-ipset list
-# Expected output:
-# Name: 192.168.21.180
-# Type: hash:net 
-# Revision: 7  
-# Header: family inet hashsize 1024 maxelem 65536 timeout 60 bucketsize 12 initval 0x928f08a1
-# Size in memory: 5640
-# References: 1
-# Number of entries: 1
-# Members:
-# 76.223.92.165 timeout 144
-```
-
-### Verify iptables Rules
-Check that firewall rules are created for each client:
-```bash
-iptables -L
-# Expected output should include rules like:
-# Chain FORWARD (policy ACCEPT)
-# target     prot opt source               destination
-# ACCEPT     all  --  192.168.21.180       anywhere             match-set 192.168.21.180 dst
-# REJECT     all  --  192.168.21.180       anywhere             reject-with icmp-port-unreachable
-# ACCEPT     all  --  192.168.21.158       anywhere             match-set 192.168.21.158 dst
-# REJECT     all  --  192.168.21.158       anywhere             reject-with icmp-port-unreachable
-```
-
-### Test Web Interface
-Access the web interface at http://192.168.21.1:8080 to view and manage firewall rules.
-
-### Test Firewall Functionality
-From a client on the LAN, test the firewall behavior:
-
-```bash
-# Try to ping an IP directly (should fail)
-ping -c1 1.1.1.1
-# Expected: Destination Port Unreachable
-
-# Ping by hostname (should work and create firewall rule)
-ping -c1 one.one.one.one
-# Expected: Success
-
-# Now ping the IP directly again (should work until TTL expires)
-ping -c1 1.1.1.1
-# Expected: Success
-```
-
-## Step 8: Domain Blacklisting Testing
-
-The example configuration includes domain blacklisting via Redis. Test it:
-
-```bash
-# Access the blacklist management script
-docker exec -it dfirewall /scripts/manage_blacklists.sh
-
-# List current blacklisted domains
-docker exec -it dfirewall /scripts/manage_blacklists.sh list-domains
-
-# Test DNS resolution for a blacklisted domain
-dig www.google.com @192.168.21.1
-# Expected: NXDOMAIN response if blacklisted
-```
-
-## Advanced Configuration
-
-### Default Deny Policy
-For better security, configure default deny instead of per-client REJECT rules. Modify `/etc/iptables/rules.v4`:
-
-```bash
-cat > /etc/iptables/rules.v4 <<EOF
+root@debian:~/dfirewall# cat /etc/iptables/rules.v4
 *nat
 -A POSTROUTING -o enp2s0f0.3 -j MASQUERADE
 COMMIT
@@ -288,77 +302,9 @@ COMMIT
 -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
 # drop on WAN otherwise      
 -A INPUT -i enp2s0f0.3 -j DROP 
-# Default deny for LAN forwarding
 -A FORWARD -s 192.168.21.0/24 -j REJECT
 COMMIT
-EOF
 ```
+As configured in this example, the firewall doesn't reject traffic from a client **until** at least one DNS request is made by the client.
 
-This approach rejects forwarded traffic by default, and dfirewall creates ACCEPT rules for allowed IPs.
-
-### Install Optional Tools
-Install additional networking tools useful for router management:
-```bash
-apt -y install net-tools dnsutils netcat-openbsd tcpdump lsof htop iftop ldnsutils netdiscover --no-install-recommends
-```
-
-## Troubleshooting
-
-### Common Issues
-
-#### Network Interface Issues
-- Verify interface names with `ip link show`
-- Check interface configuration with `ip addr show`
-- Ensure interfaces are up with `ip link set <interface> up`
-
-#### iptables Issues
-- Check current rules: `iptables -L -v -n`
-- Verify NAT rules: `iptables -t nat -L -v -n`
-- Monitor rule hits: `watch iptables -L -v -n`
-
-#### Docker Issues
-- Check container status: `docker-compose ps`
-- View container logs: `docker-compose logs dfirewall`
-- Verify network mode: `docker inspect dfirewall | grep NetworkMode`
-
-#### DNS Resolution Issues
-- Test upstream DNS: `dig @1.1.1.1 google.com`
-- Check dfirewall DNS: `dig @127.0.0.1 google.com`
-- Verify port binding: `netstat -tulpn | grep :53`
-
-### Debug Commands
-```bash
-# Monitor DNS traffic
-tcpdump -i any port 53
-
-# Watch iptables rule creation
-watch iptables -L -v -n
-
-# Monitor ipset changes
-watch ipset list
-
-# Check dfirewall logs
-docker-compose logs -f dfirewall
-
-# Monitor Redis activity
-docker exec -it redis redis-cli monitor
-```
-
-## Security Considerations
-
-1. **Firewall Rules**: The example creates per-client REJECT rules. Consider default deny policy for better security.
-2. **Network Isolation**: Ensure proper network segmentation between WAN and LAN.
-3. **Service Security**: Secure Redis, Docker, and other services according to best practices.
-4. **Updates**: Keep the system and Docker images updated.
-5. **Monitoring**: Implement logging and monitoring for security events.
-6. **Backup**: Backup configuration files and iptables rules.
-
-## Performance Optimization
-
-1. **Redis Tuning**: Configure Redis for optimal performance based on your traffic.
-2. **ipset Optimization**: Use appropriate timeout values for ipset entries.
-3. **iptables Optimization**: Order rules by frequency of matches.
-4. **Hardware**: Ensure adequate CPU and memory for your traffic volume.
-5. **Network Buffers**: Tune network buffer sizes for high throughput.
-
-This completes the Linux setup for dfirewall as a network firewall router.
+Since the example setup uses ipset we don't need EXPIRE_SCRIPT enabled (since IPs expire on their own), but it does allow the "Delete" button in the UI to work.
