@@ -1,39 +1,37 @@
-# AI and Reputation Checking
+# IP and Domain Reputation Checking
 
-This document provides comprehensive guidance for configuring AI-powered threat detection and reputation checking in dfirewall.
+This document provides comprehensive guidance for configuring IP and domain reputation checking in dfirewall using threat intelligence providers.
 
 ## Overview
 
-dfirewall integrates with leading threat intelligence providers and AI services to provide real-time security analysis of DNS requests, domain reputation checking, and intelligent threat detection.
+dfirewall integrates with leading threat intelligence providers to provide real-time security analysis of DNS requests and domain reputation checking. This defensive security feature helps identify and block access to known malicious domains and IP addresses.
 
-## IP and Domain Reputation Checking
+## Supported Providers
 
-### Supported Providers
-
-#### VirusTotal
+### VirusTotal
 - **IP & Domain Reputation**: Comprehensive threat intelligence database
 - **Multi-Engine Analysis**: Results from 70+ antivirus engines
 - **API Key Required**: Free and premium plans available
 - **Rate Limits**: 4 requests/minute (free), 1000/minute (premium)
 
-#### AbuseIPDB  
+### AbuseIPDB  
 - **IP Reputation**: Community-driven IP abuse reporting
 - **Confidence Scoring**: Percentage-based threat confidence
 - **Categories**: Detailed abuse category classification
 - **API Key Required**: Free registration available
 
-#### URLVoid
+### URLVoid
 - **Domain Reputation**: Multi-engine domain analysis
 - **Security Vendors**: Aggregates 30+ security engines
 - **Website Scanning**: Real-time website safety analysis
 - **API Key Required**: Paid service
 
-#### Custom Providers
+### Custom Providers
 - **REST API Integration**: Support for any HTTP-based threat intelligence API
 - **Flexible Authentication**: Custom headers and authentication methods
 - **Configurable Endpoints**: Adaptable URL patterns and response parsing
 
-### Configuration
+## Configuration
 
 Create a reputation configuration file and set `REPUTATION_CONFIG=/path/to/reputation.json`:
 
@@ -79,15 +77,15 @@ Create a reputation configuration file and set `REPUTATION_CONFIG=/path/to/reput
 }
 ```
 
-### Configuration Options
+## Configuration Options
 
-#### Global Settings
+### Global Settings
 - **`enabled`**: Enable/disable reputation checking globally
 - **`min_threat_score`**: Minimum score to consider malicious (0.0-1.0)
 - **`cache_results`**: Cache reputation results to reduce API calls
 - **`cache_expiration`**: Cache TTL in seconds
 
-#### Per-Checker Settings
+### Per-Checker Settings
 - **`name`**: Unique identifier for the checker
 - **`type`**: Target type ("ip", "domain", or "both")
 - **`provider`**: Provider identifier for logging
@@ -100,7 +98,7 @@ Create a reputation configuration file and set `REPUTATION_CONFIG=/path/to/reput
 - **`headers`**: Custom HTTP headers for authentication
 - **`query_format`**: URL pattern with {target} placeholder
 
-### Reputation Response Format
+## Response Format
 
 Each reputation check returns structured data:
 ```json
@@ -119,99 +117,6 @@ Each reputation check returns structured data:
   "sources": ["virustotal", "urlvoid"],
   "checked_at": "2024-01-15T10:30:00Z",
   "cache_hit": false
-}
-```
-
-## AI-Powered Threat Detection
-
-### Supported AI Providers
-
-#### OpenAI GPT Models
-- **Domain Analysis**: Intelligent domain name pattern analysis
-- **Traffic Anomaly Detection**: Behavioral analysis of DNS patterns
-- **Threat Categorization**: AI-powered threat classification
-- **API Key Required**: OpenAI account with API access
-
-#### Anthropic Claude
-- **Advanced Reasoning**: Deep analysis of threat indicators
-- **Context-Aware Detection**: Comprehensive threat assessment
-- **Multi-Modal Analysis**: Text and pattern analysis
-- **API Key Required**: Anthropic API access
-
-#### Local AI Models
-- **Privacy-First**: No external API calls required
-- **Custom Models**: Support for specialized security models
-- **Offline Operation**: Works without internet connectivity
-- **Resource Requirements**: GPU/CPU resources for inference
-
-### AI Configuration
-
-Create an AI configuration file and set `AI_CONFIG=/path/to/ai-config.json`:
-
-```json
-{
-  "enabled": true,
-  "provider": "openai",
-  "api_key": "your_openai_api_key",
-  "base_url": "https://api.openai.com/v1",
-  "model": "gpt-4",
-  "timeout": 30,
-  
-  "domain_analysis": true,
-  "traffic_anomalies": true,
-  "proactive_threat_hunting": false,
-  
-  "min_confidence": 0.8,
-  "max_analysis_delay": 5,
-  "cache_results": true,
-  "cache_expiration": 7200
-}
-```
-
-### AI Analysis Features
-
-#### Domain Analysis
-Analyzes domain names for suspicious patterns:
-- **DGA Detection**: Domain Generation Algorithm identification
-- **Typosquatting**: Detection of domain impersonation attempts
-- **Suspicious TLDs**: Analysis of unusual top-level domains
-- **Character Patterns**: Entropy and randomness analysis
-
-#### Traffic Anomaly Detection
-Monitors DNS request patterns for anomalies:
-- **Request Frequency**: Unusual query patterns
-- **Domain Diversity**: Abnormal domain request distribution
-- **Temporal Patterns**: Time-based anomaly detection
-- **Client Behavior**: Per-client traffic analysis
-
-#### Threat Categorization
-AI-powered classification of threats:
-- **Malware C&C**: Command and control server identification
-- **Phishing**: Phishing site detection and classification
-- **Data Exfiltration**: Suspicious data transfer patterns
-- **Botnet Activity**: Coordinated malicious activity detection
-
-### AI Response Format
-
-AI analysis returns detailed threat intelligence:
-```json
-{
-  "target": "suspicious-domain.com",
-  "request_id": "ai-req-123456",
-  "is_malicious": true,
-  "is_anomaly": false,
-  "confidence": 0.92,
-  "threat_score": 0.88,
-  "threat_type": "phishing",
-  "severity": "high",
-  "reasoning": "Domain exhibits characteristics typical of phishing campaigns targeting financial institutions. The subdomain structure and SSL certificate patterns match known threat indicators.",
-  "categories": ["phishing", "credential_theft"],
-  "iocs": ["suspicious-domain.com", "185.199.108.153"],
-  "related_threats": ["campaign_id_12345"],
-  "provider": "openai",
-  "model": "gpt-4",
-  "analysis_time": 2847,
-  "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
 
@@ -236,31 +141,34 @@ AI analysis returns detailed threat intelligence:
 }
 ```
 
-### OpenAI GPT-4 Integration
+### Multi-Provider Setup
 ```json
 {
   "enabled": true,
-  "provider": "openai",
-  "api_key": "sk-your-openai-api-key",
-  "base_url": "https://api.openai.com/v1",
-  "model": "gpt-4-turbo",
-  "timeout": 30,
-  "domain_analysis": true,
-  "traffic_anomalies": true,
-  "min_confidence": 0.85
-}
-```
-
-### Local AI Model Integration
-```json
-{
-  "enabled": true,
-  "provider": "local",
-  "base_url": "http://localhost:8000/v1",
-  "model": "security-bert-large",
-  "timeout": 10,
-  "domain_analysis": true,
-  "traffic_anomalies": false
+  "min_threat_score": 0.6,
+  "checkers": [
+    {
+      "name": "virustotal_primary",
+      "type": "both",
+      "provider": "virustotal",
+      "enabled": true,
+      "weight": 0.4
+    },
+    {
+      "name": "abuseipdb_secondary", 
+      "type": "ip",
+      "provider": "abuseipdb",
+      "enabled": true,
+      "weight": 0.3
+    },
+    {
+      "name": "urlvoid_tertiary",
+      "type": "domain", 
+      "provider": "urlvoid",
+      "enabled": true,
+      "weight": 0.3
+    }
+  ]
 }
 ```
 
@@ -333,13 +241,8 @@ curl -X POST http://localhost:8080/api/reputation/check \
   -H "Content-Type: application/json" \
   -d '{"target": "example.com", "type": "domain"}'
 
-# Test AI analysis
-curl -X POST http://localhost:8080/api/ai/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"target": "suspicious.com", "type": "domain"}'
-
 # Check configuration status
-curl http://localhost:8080/api/config/status | jq '.reputation_config,.ai_config'
+curl http://localhost:8080/api/config/status | jq '.reputation_config'
 ```
 
 ## Monitoring and Metrics
@@ -368,60 +271,8 @@ curl http://localhost:8080/api/reputation/recent
 # Review reputation decisions
 grep "REPUTATION" /var/log/dfirewall.log | tail -50
 
-# Monitor AI analysis results
-grep "AI_ANALYSIS" /var/log/dfirewall.log | jq .
-
 # Track blocked threats
-grep "BLOCKED.*reputation\|BLOCKED.*ai" /var/log/dfirewall.log
-```
-
-## Advanced Configuration
-
-### Multi-Provider Setup
-```json
-{
-  "enabled": true,
-  "min_threat_score": 0.6,
-  "checkers": [
-    {
-      "name": "virustotal_primary",
-      "type": "both",
-      "provider": "virustotal",
-      "enabled": true,
-      "weight": 0.4
-    },
-    {
-      "name": "abuseipdb_secondary", 
-      "type": "ip",
-      "provider": "abuseipdb",
-      "enabled": true,
-      "weight": 0.3
-    },
-    {
-      "name": "urlvoid_tertiary",
-      "type": "domain", 
-      "provider": "urlvoid",
-      "enabled": true,
-      "weight": 0.3
-    }
-  ]
-}
-```
-
-### Threat Intelligence Feeds
-```json
-{
-  "enabled": true,
-  "threat_feeds": [
-    {
-      "name": "corporate_threat_intel",
-      "url": "https://intel.company.com/api/threats",
-      "api_key": "corporate_intel_key",
-      "refresh_interval": 300,
-      "format": "json"
-    }
-  ]
-}
+grep "BLOCKED.*reputation" /var/log/dfirewall.log
 ```
 
 ## Security Checklist

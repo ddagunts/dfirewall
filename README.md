@@ -14,198 +14,34 @@ It allows to create an IP firewall with the following features:
  - Turns any DNS block into a firewall block
 
 # Configuration
-Configuration is handled through environmental variables.  The following variables are available:
-```
-PORT=                        # listening port (OPTIONAL)
-UPSTREAM=8.8.8.8:53          # upstream DNS resolver host and port (REQUIRED)
-REDIS=redis://127.0.0.1:6379 # location of Redis (REQUIRED)
-# Redis Security Configuration (OPTIONAL)
-REDIS_PASSWORD=              # Redis authentication password (overrides URL password)
-REDIS_TLS=true               # enable TLS/SSL connection to Redis (true/1/enabled)
-REDIS_TLS_CERT=              # path to client certificate file for mutual TLS
-REDIS_TLS_KEY=               # path to client private key file for mutual TLS
-REDIS_TLS_CA=                # path to CA certificate file for server verification
-REDIS_TLS_SERVER_NAME=       # override server name for TLS certificate verification
-REDIS_TLS_SKIP_VERIFY=       # skip TLS certificate verification (NOT recommended for production)
-# Redis Performance Configuration (OPTIONAL)
-REDIS_MAX_RETRIES=3          # maximum connection retry attempts
-REDIS_DIAL_TIMEOUT=5s        # connection establishment timeout
-REDIS_READ_TIMEOUT=3s        # read operation timeout
-REDIS_WRITE_TIMEOUT=3s       # write operation timeout
-REDIS_POOL_SIZE=10           # connection pool size
-INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec when it encounters a new IP address (global fallback) (OPTIONAL)
-EXPIRE_SCRIPT=               # path of an executable for "dfirewall" to exec when Redis keys expire (global fallback) (OPTIONAL)
-SCRIPT_CONFIG=               # path to JSON configuration file for per-client script settings (overrides global settings) (OPTIONAL)
-BLACKLIST_CONFIG=            # path to JSON configuration file for IP/domain blacklisting  (OPTIONAL)
-REPUTATION_CONFIG=           # path to JSON configuration file for IP/domain reputation checking  (OPTIONAL)
-AI_CONFIG=                   # path to JSON configuration file for AI-powered threat detection  (OPTIONAL)
-CUSTOM_SCRIPT_CONFIG=        # path to JSON configuration file for user-provided pass/fail scripts  (OPTIONAL)
-WEB_UI_PORT=                 # port for web-based rule management interface (e.g., 8080) (OPTIONAL)
-# Web UI Authentication Configuration (OPTIONAL)
-WEBUI_AUTH_CONFIG=           # path to JSON configuration file for Web UI authentication settings
-WEBUI_HTTPS_ENABLED=         # enable HTTPS (true/false)
-WEBUI_CERT_FILE=             # path to TLS certificate file for HTTPS
-WEBUI_KEY_FILE=              # path to TLS private key file for HTTPS
-WEBUI_PASSWORD_AUTH=         # enable password authentication (true/false)
-WEBUI_USERNAME=              # username for password authentication
-WEBUI_PASSWORD=              # password for authentication (will be hashed automatically)
-WEBUI_LDAP_AUTH=             # enable LDAP authentication (true/false)
-WEBUI_LDAP_SERVER=           # LDAP server hostname
-WEBUI_LDAP_PORT=             # LDAP server port (default: 389)
-WEBUI_LDAP_BASE_DN=          # LDAP base DN for user search
-WEBUI_LDAP_BIND_DN=          # LDAP bind DN for service account
-WEBUI_LDAP_BIND_PASS=        # LDAP bind password for service account
-WEBUI_LDAP_USER_ATTR=        # LDAP user attribute (default: uid)
-WEBUI_LDAP_SEARCH_FILTER=    # LDAP search filter for users
-WEBUI_HEADER_AUTH=           # enable header-based authentication (true/false)
-WEBUI_HEADER_NAME=           # HTTP header name to check for authentication
-WEBUI_HEADER_VALUES=         # comma-separated list of valid header values
-WEBUI_TRUSTED_PROXIES=       # comma-separated list of trusted proxy IPs/CIDRs
-WEBUI_SESSION_SECRET=        # secret key for session signing (auto-generated if not provided)
-WEBUI_SESSION_EXPIRY=        # session expiry time in hours (default: 24)
-ENABLE_EDNS=                 # set to any value to enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6) (OPTIONAL)
-DEBUG=                       # set to any value to enable verbose logging (OPTIONAL)
-INVOKE_ALWAYS=               # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered (global fallback) (OPTIONAL)
-HANDLE_ALL_IPS=              # set to any value to enable creating rules for all IPs in a response (OPTIONAL)
+
+dfirewall is configured through environment variables and JSON configuration files for advanced features.
+
+**📖 For comprehensive configuration guidance, see:** [docs/configuration.md](docs/configuration.md)
+
+### Quick Start Configuration
+```bash
+# Required
+UPSTREAM=1.1.1.1:53          # upstream DNS resolver
+REDIS=redis://127.0.0.1:6379 # Redis connection string
+
+# Optional
+PORT=53                      # listening port
+WEB_UI_PORT=8080            # web interface port
+DEBUG=true                  # enable verbose logging
 ```
 # Setup on Linux
 
-Start with a minimal Debian install
+dfirewall can be deployed as a network router with firewall capabilities on Linux systems.
 
-The example instructions assume that the machine:
-- has two network interfaces
-- WAN has a DHCP server willing to give you an IPv4 address
-- LAN is using 192.168.21.0/24 subnet
-- 1.1.1.1:53 is accessible
-- WAN interface name is "enp2s0f0.3"
-- LAN interface name is "ens9.31"
+**📖 For complete step-by-step setup instructions, see:** [docs/linux-setup.md](docs/linux-setup.md)
 
-You will need to account at least for the interface names
-
-1) Configure the network interfaces
-
-Use `/etc/network/interfaces` to configure your NICs, here is my example:
-```
-auto lo
-iface lo inet loopback
-
-auto enp2s0f0.3
-iface enp2s0f0.3 inet dhcp
-
-auto ens9.31
-iface ens9.31 inet static
-  address 192.168.21.1/24
-  netmask 255.255.255.0
-```
-```
-# /etc/init.d/networking restart
-Restarting networking (via systemctl): networking.service.
-```
-
-2) Enable IP forwarding and optionally disable IPv6 (IPv6 is now supported via AAAA records)
-```
-# Enable IP forwarding (required)
-echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/router.conf
-
-# Optionally disable IPv6 if not needed (dfirewall supports IPv6 addresses and AAAA records)  
-# echo "net.ipv6.conf.all.disable_ipv6=1"     >  /etc/sysctl.d/ipv6_disable.conf
-# echo "net.ipv6.conf.default.disable_ipv6=1" >> /etc/sysctl.d/ipv6_disable.conf
-
-# Apply changes
-sysctl --system
-```
-```
-# ip ad sh enp2s0f0.3
-4: enp2s0f0.3@enp2s0f0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
-    link/ether c8:2a:14:0f:7c:9f brd ff:ff:ff:ff:ff:ff
-    inet 192.168.3.137/24 brd 192.168.3.255 scope global dynamic enp2s0f0.3
-       valid_lft 446sec preferred_lft 446sec
-# ip ad sh ens9.31
-5: ens9.31@ens9: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
-    link/ether 38:c9:86:13:f2:23 brd ff:ff:ff:ff:ff:ff
-    inet 192.168.21.1/24 brd 192.168.21.255 scope global ens9.31
-       valid_lft forever preferred_lft forever
-```
-Install packages we need for a firewall (iptables, ipset, and git to clone this)
-```
-# DEBIAN_FRONTEND=noninteractive apt -y install iptables ipset dnsmasq iptables-persistent git
-```
-
-# Enable NAT (starting with empty iptables ruleset)
-
-Create iptables-persistent rules and restore them (**replace the WAN interface name**)
-```
-cat > /etc/iptables/rules.v4 <<EOF
-*nat
--A POSTROUTING -o enp2s0f0.3 -j MASQUERADE
-COMMIT
-
-*filter
--A INPUT -i lo -j ACCEPT
-# allow established connections
--A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
-# drop on WAN otherwise
--A INPUT -i enp2s0f0.3 -j DROP
-COMMIT
-EOF
-
-# iptables-restore < /etc/iptables/rules.v4
-```
-Ruleset after loading rules:
-```
-# iptables -L 
-Chain INPUT (policy ACCEPT)
-target     prot opt source               destination         
-ACCEPT     all  --  anywhere             anywhere            
-ACCEPT     all  --  anywhere             anywhere             state RELATED,ESTABLISHED
-DROP       all  --  anywhere             anywhere            
-
-Chain FORWARD (policy ACCEPT)
-target     prot opt source               destination         
-
-Chain OUTPUT (policy ACCEPT)
-target     prot opt source               destination         
-#  iptables -L -t nat
-Chain PREROUTING (policy ACCEPT)
-target     prot opt source               destination         
-
-Chain INPUT (policy ACCEPT)
-target     prot opt source               destination         
-
-Chain OUTPUT (policy ACCEPT)
-target     prot opt source               destination         
-
-Chain POSTROUTING (policy ACCEPT)
-target     prot opt source               destination         
-MASQUERADE  all  --  anywhere             anywhere           
-```
-# Start DHCP server 
-(**replace LAN interface name with your interface**)
-```
-# setup dnsmasq as a DHCP server for the LAN
-cat > /etc/dnsmasq.conf <<EOF
-interface=ens9.31 # edit this
-listen-address=127.0.0.1
-port=0
-domain=lan
-dhcp-range=192.168.21.100,192.168.21.200,1h
-dhcp-option=option:dns-server,192.168.21.1
-EOF
-```
-```
-#  systemctl enable dnsmasq.service && systemctl restart dnsmasq.service
-```
-Now your Debian machine should be a router
-
-# Install Docker, clone this repo, and run dfirewall
-```
-# mkdir /etc/docker
-# echo '{ "iptables": false }' > /etc/docker/daemon.json
-# apt -y install docker.io docker-compose --no-install-recommends
-# systemctl enable docker && systemctl start docker
-# git clone https://github.com/ddagunts/dfirewall 
-# cd dfirewall
-# docker-compose up -d
+### Quick Docker Deployment
+```bash
+# Clone and run with Docker Compose
+git clone https://github.com/ddagunts/dfirewall 
+cd dfirewall
+docker-compose up -d
 ```
 
 # Testing
@@ -447,11 +283,11 @@ dfirewall supports comprehensive IP and domain blacklisting using Redis and file
 
 dfirewall integrates with VirusTotal, AbuseIPDB, URLVoid, and custom threat intelligence providers for real-time security analysis.
 
-**📖 For detailed configuration, see:** [docs/ai-and-reputation.md](docs/ai-and-reputation.md)
+**📖 For detailed configuration, see:** [docs/reputation-checking.md](docs/reputation-checking.md)
 
 ## AI-Powered Threat Detection
 
 dfirewall integrates AI technology (OpenAI, Claude, local models) for domain analysis, traffic anomaly detection, and proactive threat hunting.
 
-**📖 For detailed configuration, see:** [docs/ai-and-reputation.md](docs/ai-and-reputation.md)
+**📖 For detailed configuration, see:** [docs/ai-threat-detection.md](docs/ai-threat-detection.md)
 
