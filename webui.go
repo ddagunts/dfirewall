@@ -62,6 +62,9 @@ func startWebUI(port string, redisClient *redis.Client) {
 	http.HandleFunc("/api/config/status", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIConfigStatus(w, r, redisClient)
 	}))
+	http.HandleFunc("/api/ssh/status", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		handleAPISSHStatus(w, r, redisClient)
+	}))
 	
 	server := &http.Server{
 		Addr:    ":" + port,

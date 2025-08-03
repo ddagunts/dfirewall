@@ -656,6 +656,13 @@ func handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 				Parameters:  "target: string (required), type: 'ip' or 'domain' (required)",
 				Example:     "curl -X POST http://localhost:8080/api/ai/analyze -H 'Content-Type: application/json' -d '{\"target\":\"suspicious-domain.com\",\"type\":\"domain\"}'",
 			},
+			{
+				Path:        "/api/ssh/status",
+				Method:      "GET",
+				Description: "Get SSH log monitoring status and statistics",
+				Parameters:  "None",
+				Example:     "curl -X GET http://localhost:8080/api/ssh/status",
+			},
 		},
 	}
 	
@@ -745,6 +752,7 @@ func handleAPIConfigStatus(w http.ResponseWriter, r *http.Request, redisClient *
 		AIConfig:         aiConfig,
 		CustomScriptConfig: customScriptConfig,
 		WebUIAuthConfig:  authConfig,
+		SSHLogConfig:     sshLogConfig,
 		Environment: map[string]string{
 			"UPSTREAM":         os.Getenv("UPSTREAM"),
 			"PORT":             os.Getenv("PORT"),
@@ -755,10 +763,24 @@ func handleAPIConfigStatus(w http.ResponseWriter, r *http.Request, redisClient *
 			"INVOKE_SCRIPT":    os.Getenv("INVOKE_SCRIPT"),
 			"INVOKE_ALWAYS":    os.Getenv("INVOKE_ALWAYS"),
 			"EXPIRE_SCRIPT":    os.Getenv("EXPIRE_SCRIPT"),
+			"SSH_LOG_CONFIG":   os.Getenv("SSH_LOG_CONFIG"),
 		},
 		LoadedAt: time.Now(),
 	}
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(config)
+}
+
+// handleAPISSHStatus handles GET requests for SSH monitoring status
+func handleAPISSHStatus(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	status := getSSHLogMonitorStatus()
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
 }

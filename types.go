@@ -368,6 +368,148 @@ type WebUIAuthConfig struct {
 	SessionExpiry int    `json:"session_expiry"`  // Session expiry in hours
 }
 
+// SSH Log Monitoring Configuration
+
+// SSHLogConfig represents SSH log monitoring configuration
+type SSHLogConfig struct {
+	Enabled         bool           `json:"enabled"`          // Global SSH log monitoring enable/disable
+	Servers         []SSHServer    `json:"servers"`          // List of SSH servers to monitor
+	GlobalDefaults  SSHDefaults    `json:"global_defaults"`  // Global default settings
+	RetryConfig     SSHRetryConfig `json:"retry_config"`     // Retry and connection resilience settings
+}
+
+// SSHServer represents a single SSH server and its log monitoring configuration
+type SSHServer struct {
+	Name            string            `json:"name"`                      // Friendly name for the server
+	Host            string            `json:"host"`                      // SSH hostname or IP
+	Port            int               `json:"port"`                      // SSH port (default: 22)
+	Username        string            `json:"username"`                  // SSH username
+	
+	// Authentication settings
+	AuthMethod      string            `json:"auth_method"`               // "password", "key", or "agent"
+	Password        string            `json:"password,omitempty"`        // Password for password auth
+	PrivateKeyPath  string            `json:"private_key_path,omitempty"` // Path to private key file
+	PrivateKeyData  string            `json:"private_key_data,omitempty"` // Inline private key data (base64)
+	Passphrase      string            `json:"passphrase,omitempty"`      // Passphrase for encrypted keys
+	
+	// Host validation
+	StrictHostKeyChecking bool        `json:"strict_host_key_checking"`  // Validate host keys
+	KnownHostsFile       string       `json:"known_hosts_file,omitempty"` // Path to known_hosts file
+	HostKeyFingerprint   string       `json:"host_key_fingerprint,omitempty"` // Expected host key fingerprint
+	
+	// Log monitoring settings
+	LogFiles        []SSHLogFile      `json:"log_files"`                 // Log files to monitor on this server
+	Environment     map[string]string `json:"environment,omitempty"`     // Environment variables for this server
+	Enabled         bool              `json:"enabled"`                   // Enable/disable this server
+	
+	// Connection settings
+	ConnectionTimeout int             `json:"connection_timeout"`        // SSH connection timeout in seconds
+	KeepAlive        int              `json:"keep_alive"`                // SSH keep-alive interval in seconds
+	MaxRetries       int              `json:"max_retries"`               // Maximum connection retry attempts
+}
+
+// SSHLogFile represents a log file to monitor on an SSH server
+type SSHLogFile struct {
+	Path            string            `json:"path"`                      // Full path to log file on remote server
+	Description     string            `json:"description,omitempty"`     // Description of what this log contains
+	
+	// Pattern matching for IP/domain extraction
+	IPRegex         string            `json:"ip_regex"`                  // Regex pattern to extract IPs from log lines
+	DomainRegex     string            `json:"domain_regex,omitempty"`    // Regex pattern to extract domains from log lines
+	
+	// Log file handling
+	FollowRotation  bool              `json:"follow_rotation"`           // Handle log rotation (follow renamed files)
+	StartFromEnd    bool              `json:"start_from_end"`            // Start tailing from end of file (true) or beginning (false)
+	BufferSize      int               `json:"buffer_size"`               // Buffer size for reading log lines
+	
+	// Filtering
+	IncludeFilter   string            `json:"include_filter,omitempty"`  // Only process lines matching this regex
+	ExcludeFilter   string            `json:"exclude_filter,omitempty"`  // Skip lines matching this regex
+	
+	// Processing settings
+	MaxLineLength   int               `json:"max_line_length"`           // Maximum line length to process
+	ProcessInterval int               `json:"process_interval"`          // Interval between processing cycles in seconds
+	
+	// Integration settings
+	TreatAsClient   bool              `json:"treat_as_client"`           // Treat extracted IPs as client IPs (for firewall rules)
+	ClientIPOverride string           `json:"client_ip_override,omitempty"` // Override client IP for firewall rules
+	DefaultDomain   string            `json:"default_domain,omitempty"`  // Default domain when none extracted
+	DefaultTTL      int               `json:"default_ttl"`               // Default TTL for extracted IPs/domains
+	
+	Enabled         bool              `json:"enabled"`                   // Enable/disable this log file
+}
+
+// SSHDefaults represents global default settings for SSH log monitoring
+type SSHDefaults struct {
+	Port              int    `json:"port"`                // Default SSH port
+	ConnectionTimeout int    `json:"connection_timeout"`  // Default connection timeout
+	KeepAlive        int     `json:"keep_alive"`          // Default keep-alive interval
+	MaxRetries       int     `json:"max_retries"`         // Default max retries
+	AuthMethod       string  `json:"auth_method"`         // Default auth method
+	BufferSize       int     `json:"buffer_size"`         // Default buffer size
+	MaxLineLength    int     `json:"max_line_length"`     // Default max line length
+	ProcessInterval  int     `json:"process_interval"`    // Default process interval
+	DefaultTTL       int     `json:"default_ttl"`         // Default TTL
+	StrictHostKeyChecking bool `json:"strict_host_key_checking"` // Default host key checking
+}
+
+// SSHRetryConfig represents retry and resilience configuration
+type SSHRetryConfig struct {
+	InitialDelay     int    `json:"initial_delay"`       // Initial retry delay in seconds
+	MaxDelay         int    `json:"max_delay"`           // Maximum retry delay in seconds
+	BackoffMultiplier float64 `json:"backoff_multiplier"` // Backoff multiplier for exponential backoff
+	MaxReconnectAttempts int `json:"max_reconnect_attempts"` // Max reconnection attempts before giving up
+	ReconnectInterval    int `json:"reconnect_interval"`     // Interval between reconnection attempts
+	HealthCheckInterval  int `json:"health_check_interval"`  // Health check interval in seconds
+}
+
+// SSHLogEntry represents a processed log entry from SSH monitoring
+type SSHLogEntry struct {
+	ServerName      string            `json:"server_name"`     // Name of the source server
+	LogFile         string            `json:"log_file"`        // Path to the source log file
+	Line            string            `json:"line"`            // Original log line
+	Timestamp       time.Time         `json:"timestamp"`       // When the line was processed
+	
+	// Extracted data
+	ExtractedIPs    []string          `json:"extracted_ips"`   // IPs extracted from the log line
+	ExtractedDomains []string         `json:"extracted_domains"` // Domains extracted from the log line
+	
+	// Processing metadata
+	ClientIP        string            `json:"client_ip"`       // Client IP for firewall rules
+	Domain          string            `json:"domain"`          // Domain for firewall rules
+	TTL             int               `json:"ttl"`             // TTL for firewall rules
+	
+	// Integration results
+	ProcessedAsRule bool              `json:"processed_as_rule"` // Whether this was processed as a firewall rule
+	RedisKeys       []string          `json:"redis_keys"`        // Redis keys created for this entry
+	
+	Metadata        map[string]string `json:"metadata,omitempty"`
+}
+
+// SSHMonitorStatus represents the status of SSH log monitoring
+type SSHMonitorStatus struct {
+	Enabled         bool                    `json:"enabled"`
+	ActiveServers   int                     `json:"active_servers"`
+	TotalLogFiles   int                     `json:"total_log_files"`
+	ActiveLogFiles  int                     `json:"active_log_files"`
+	ServerStatuses  map[string]SSHServerStatus `json:"server_statuses"`
+	LastUpdated     time.Time               `json:"last_updated"`
+}
+
+// SSHServerStatus represents the status of a single SSH server
+type SSHServerStatus struct {
+	Name            string    `json:"name"`
+	Host            string    `json:"host"`
+	Connected       bool      `json:"connected"`
+	LastConnected   time.Time `json:"last_connected"`
+	LastError       string    `json:"last_error,omitempty"`
+	LogFilesActive  int       `json:"log_files_active"`
+	LinesProcessed  int64     `json:"lines_processed"`
+	IPsExtracted    int64     `json:"ips_extracted"`
+	DomainsExtracted int64    `json:"domains_extracted"`
+	LastActivity    time.Time `json:"last_activity"`
+}
+
 // ConfigStatus represents configuration status information
 type ConfigStatus struct {
 	ScriptConfig     *ScriptConfiguration `json:"script_config,omitempty"`
@@ -376,6 +518,7 @@ type ConfigStatus struct {
 	AIConfig         *AIConfig            `json:"ai_config,omitempty"`
 	CustomScriptConfig *CustomScriptConfig `json:"custom_script_config,omitempty"`
 	WebUIAuthConfig  *WebUIAuthConfig     `json:"webui_auth_config,omitempty"`
+	SSHLogConfig     *SSHLogConfig        `json:"ssh_log_config,omitempty"`
 	Environment      map[string]string    `json:"environment"`
 	LoadedAt         time.Time            `json:"loaded_at"`
 }

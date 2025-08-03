@@ -1,0 +1,117 @@
+{
+  "enabled": true,
+  "global_defaults": {
+    "port": 22,
+    "connection_timeout": 30,
+    "keep_alive": 30,
+    "max_retries": 3,
+    "auth_method": "key",
+    "buffer_size": 4096,
+    "max_line_length": 1024,
+    "process_interval": 1,
+    "default_ttl": 3600,
+    "strict_host_key_checking": false
+  },
+  "retry_config": {
+    "initial_delay": 5,
+    "max_delay": 300,
+    "backoff_multiplier": 2.0,
+    "max_reconnect_attempts": 10,
+    "reconnect_interval": 60,
+    "health_check_interval": 300
+  },
+  "servers": [
+    {
+      "name": "web-server-1",
+      "host": "192.168.1.100",
+      "port": 22,
+      "username": "dfirewall",
+      "auth_method": "key",
+      "private_key_path": "/home/dfirewall/.ssh/id_rsa",
+      "strict_host_key_checking": false,
+      "enabled": true,
+      "connection_timeout": 30,
+      "keep_alive": 30,
+      "max_retries": 3,
+      "log_files": [
+        {
+          "path": "/var/log/nginx/access.log",
+          "description": "Nginx access log - extract client IPs",
+          "ip_regex": "(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})",
+          "domain_regex": "Host:\\s*([a-zA-Z0-9.-]+)",
+          "follow_rotation": true,
+          "start_from_end": true,
+          "buffer_size": 8192,
+          "max_line_length": 2048,
+          "process_interval": 1,
+          "treat_as_client": true,
+          "default_ttl": 3600,
+          "enabled": true
+        },
+        {
+          "path": "/var/log/apache2/access.log",
+          "description": "Apache access log - extract client IPs",
+          "ip_regex": "^(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})",
+          "follow_rotation": true,
+          "start_from_end": true,
+          "include_filter": "\\s(GET|POST|PUT|DELETE)\\s",
+          "treat_as_client": true,
+          "default_domain": "apache-access.log",
+          "default_ttl": 1800,
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "name": "firewall-logs",
+      "host": "192.168.1.1",
+      "port": 22,
+      "username": "admin",
+      "auth_method": "password",
+      "password": "secure_password_here",
+      "strict_host_key_checking": false,
+      "enabled": true,
+      "log_files": [
+        {
+          "path": "/var/log/iptables.log",
+          "description": "IPTables log - extract blocked destination IPs",
+          "ip_regex": "DST=(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})",
+          "follow_rotation": true,
+          "start_from_end": true,
+          "include_filter": "DPT=80|DPT=443",
+          "exclude_filter": "SRC=192\\.168\\.",
+          "treat_as_client": false,
+          "client_ip_override": "192.168.1.1",
+          "default_domain": "blocked.destination",
+          "default_ttl": 300,
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "name": "dns-server",
+      "host": "dns.example.com",
+      "port": 2222,
+      "username": "monitor",
+      "auth_method": "key",
+      "private_key_data": "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQ==",
+      "strict_host_key_checking": true,
+      "known_hosts_file": "/home/dfirewall/.ssh/known_hosts",
+      "enabled": false,
+      "log_files": [
+        {
+          "path": "/var/log/bind/query.log",
+          "description": "BIND DNS query log - extract queried domains and client IPs",
+          "ip_regex": "client\\s+(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})",
+          "domain_regex": "query:\\s+([a-zA-Z0-9.-]+)\\s+IN",
+          "follow_rotation": true,
+          "start_from_end": true,
+          "exclude_filter": "localhost|127\\.0\\.0\\.1",
+          "treat_as_client": true,
+          "default_ttl": 7200,
+          "enabled": true
+        }
+      ]
+    }
+  ]
+}

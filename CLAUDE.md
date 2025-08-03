@@ -87,6 +87,7 @@ Optional:
 - `WEBUI_TRUSTED_PROXIES`: Comma-separated list of trusted proxy IPs/CIDRs
 - `WEBUI_SESSION_SECRET`: Secret key for session signing (auto-generated if not provided)
 - `WEBUI_SESSION_EXPIRY`: Session expiry time in hours (default: 24)
+- `SSH_LOG_CONFIG`: Path to JSON configuration file for SSH log monitoring
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
 - `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support
 - `DEBUG`: Enable verbose logging

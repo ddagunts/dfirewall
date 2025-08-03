@@ -113,3 +113,17 @@ dfirewall integrates AI technology (OpenAI, Claude, local models) for domain ana
 
 **📖 For detailed configuration, see:** [docs/ai-threat-detection.md](docs/ai-threat-detection.md)
 
+## SSH Log Monitoring
+
+dfirewall can SSH to remote servers and monitor log files in real-time, extracting IP addresses and domains using configurable regex patterns. This extends detection beyond DNS to include web server logs, firewall logs, application logs, and more.
+
+**Features:**
+- SSH connection management with password, key, and agent authentication
+- Real-time log tailing with rotation handling  
+- Configurable regex patterns for IP/domain extraction
+- Integration with existing Redis storage and firewall scripts
+- Support for multiple servers and log files
+- Resilient connections with automatic reconnection
+
+**📖 For detailed configuration, see:** [SSH_LOG_MONITORING.md](SSH_LOG_MONITORING.md)
+

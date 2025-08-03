@@ -156,6 +156,20 @@ func Register(rt Route) error {
 		log.Printf("CUSTOM_SCRIPT_CONFIG env var not set, custom script validation disabled")
 	}
 
+	// SSH_LOG_CONFIG: JSON configuration file for SSH log monitoring
+	sshLogConfigPath := os.Getenv("SSH_LOG_CONFIG")
+	if sshLogConfigPath != "" {
+		config, err := loadSSHLogConfiguration(sshLogConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load SSH log configuration: %v", err)
+		}
+		sshLogConfig = config
+		
+		log.Printf("SSH_LOG_CONFIG loaded from %s: enabled=%v, servers=%d", sshLogConfigPath, sshLogConfig.Enabled, len(sshLogConfig.Servers))
+	} else {
+		log.Printf("SSH_LOG_CONFIG env var not set, SSH log monitoring disabled")
+	}
+
 	var redisClient *redis.Client
 	var err error
 	redisClient, err = createRedisClient(redisEnv)
@@ -259,6 +273,14 @@ func Register(rt Route) error {
 		}()
 	} else {
 		log.Printf("EXPIRE_SCRIPT not set, Redis key expiration monitoring disabled")
+	}
+
+	// Initialize SSH log monitoring if enabled
+	if sshLogConfig != nil && sshLogConfig.Enabled {
+		err = initializeSSHLogMonitoring(redisClient)
+		if err != nil {
+			log.Printf("WARNING: Failed to initialize SSH log monitoring: %v", err)
+		}
 	}
 
 	// Start web UI server if enabled
