@@ -595,3 +595,51 @@ echo "Script completed successfully"
 		t.Error("File operation test should complete successfully")
 	}
 }
+
+func TestPadTTLForScript(t *testing.T) {
+	tests := []struct {
+		name        string
+		originalTTL uint32
+		expectedTTL uint32
+	}{
+		{
+			name:        "TTL less than 60 seconds should be padded",
+			originalTTL: 30,
+			expectedTTL: 90, // 30 + 60
+		},
+		{
+			name:        "TTL of exactly 60 seconds should not be padded",
+			originalTTL: 60,
+			expectedTTL: 60,
+		},
+		{
+			name:        "TTL greater than 60 seconds should not be padded",
+			originalTTL: 300,
+			expectedTTL: 300,
+		},
+		{
+			name:        "Very low TTL of 1 second should be padded",
+			originalTTL: 1,
+			expectedTTL: 61, // 1 + 60
+		},
+		{
+			name:        "TTL of 0 should be padded",
+			originalTTL: 0,
+			expectedTTL: 60, // 0 + 60
+		},
+		{
+			name:        "Large TTL should remain unchanged",
+			originalTTL: 3600,
+			expectedTTL: 3600,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := padTTLForScript(tt.originalTTL)
+			if result != tt.expectedTTL {
+				t.Errorf("padTTLForScript(%d) = %d, expected %d", tt.originalTTL, result, tt.expectedTTL)
+			}
+		})
+	}
+}

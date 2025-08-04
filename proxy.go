@@ -23,6 +23,15 @@ func inRange(ipLow, ipHigh, ip netip.Addr) bool {
 	return ip.Compare(ipLow) >= 0 && ip.Compare(ipHigh) <= 0
 }
 
+// padTTLForScript pads TTL values less than 60 seconds by adding 60 seconds
+// This prevents firewall rules from expiring prematurely for very low TTL values
+func padTTLForScript(originalTTL uint32) uint32 {
+	if originalTTL < 60 {
+		return originalTTL + 60
+	}
+	return originalTTL
+}
+
 // Register sets up the DNS proxy and starts handling DNS requests
 func Register(rt Route) error {
 	// Validate zone parameter - empty zones are not allowed
@@ -466,10 +475,16 @@ func Register(rt Route) error {
 					}
 				}
 				
-				ttl := strconv.FormatUint(uint64(rrType.Hdr.Ttl), 10)
+				// Create padded TTL for script execution (original TTL + 60 seconds if TTL < 60)
+				scriptTTL := padTTLForScript(rrType.Hdr.Ttl)
+				ttl := strconv.FormatUint(uint64(scriptTTL), 10)
 
 				if os.Getenv("DEBUG") != "" {
-					log.Printf("A record: %s -> %s (TTL: %s)", domain, resolvedIP, ttl)
+					if scriptTTL != rrType.Hdr.Ttl {
+						log.Printf("A record: %s -> %s (DNS TTL: %d, Script TTL: %s)", domain, resolvedIP, rrType.Hdr.Ttl, ttl)
+					} else {
+						log.Printf("A record: %s -> %s (TTL: %s)", domain, resolvedIP, ttl)
+					}
 				}
 
 				// FEATURE: IP blacklist checking after DNS resolution
@@ -574,10 +589,16 @@ func Register(rt Route) error {
 					}
 				}
 				
-				ttl := strconv.FormatUint(uint64(rrType.Hdr.Ttl), 10)
+				// Create padded TTL for script execution (original TTL + 60 seconds if TTL < 60)
+				scriptTTL := padTTLForScript(rrType.Hdr.Ttl)
+				ttl := strconv.FormatUint(uint64(scriptTTL), 10)
 
 				if os.Getenv("DEBUG") != "" {
-					log.Printf("AAAA record: %s -> %s (TTL: %s)", domain, resolvedIPv6, ttl)
+					if scriptTTL != rrType.Hdr.Ttl {
+						log.Printf("AAAA record: %s -> %s (DNS TTL: %d, Script TTL: %s)", domain, resolvedIPv6, rrType.Hdr.Ttl, ttl)
+					} else {
+						log.Printf("AAAA record: %s -> %s (TTL: %s)", domain, resolvedIPv6, ttl)
+					}
 				}
 
 				// Similar processing for IPv6
