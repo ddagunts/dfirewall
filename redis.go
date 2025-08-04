@@ -196,9 +196,14 @@ func validateClientPattern(pattern string) error {
 		return nil
 	}
 	
+	// Check if it's a wildcard pattern
+	if pattern == "*" {
+		return nil
+	}
+	
 	// Check if it's a single IP address
 	if net.ParseIP(pattern) == nil {
-		return fmt.Errorf("pattern must be a valid IP address, CIDR notation, or regex pattern starting with 'regex:'")
+		return fmt.Errorf("pattern must be a valid IP address, CIDR notation, regex pattern starting with 'regex:', or wildcard '*'")
 	}
 	
 	return nil

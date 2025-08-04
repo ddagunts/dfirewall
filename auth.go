@@ -152,12 +152,11 @@ func loadAuthConfig() *WebUIAuthConfig {
 	} else if config.SessionSecret == "" {
 		// Generate random session secret
 		secret := make([]byte, 32)
-		if _, err := rand.Read(secret); err == nil {
-			config.SessionSecret = base64.StdEncoding.EncodeToString(secret)
-		} else {
-			log.Printf("Error generating session secret: %v", err)
-			config.SessionSecret = "default-insecure-secret"
+		if _, err := rand.Read(secret); err != nil {
+			log.Fatalf("FATAL: Failed to generate secure session secret: %v. Set WEBUI_SESSION_SECRET environment variable or ensure crypto/rand is available.", err)
 		}
+		config.SessionSecret = base64.StdEncoding.EncodeToString(secret)
+		log.Printf("Generated secure session secret automatically (consider setting WEBUI_SESSION_SECRET for persistence)")
 	}
 	
 	if sessionExpiry := os.Getenv("WEBUI_SESSION_EXPIRY"); sessionExpiry != "" {

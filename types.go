@@ -368,14 +368,109 @@ type WebUIAuthConfig struct {
 	SessionExpiry int    `json:"session_expiry"`  // Session expiry in hours
 }
 
+// Log Collection Configuration
+
+// LogCollectorConfig represents log collection configuration
+type LogCollectorConfig struct {
+	Enabled          bool               `json:"enabled"`           // Global log collection enable/disable
+	Sources          []LogSource        `json:"sources"`           // List of log sources to monitor
+	DefaultTTL       int                `json:"default_ttl"`       // Default TTL for extracted IPs/domains (seconds)
+	BufferSize       int                `json:"buffer_size"`       // Line buffer size
+	ConnectTimeout   int                `json:"connect_timeout"`   // SSH connection timeout (seconds)
+	ReadTimeout      int                `json:"read_timeout"`      // File read timeout (seconds)
+	ReconnectDelay   int                `json:"reconnect_delay"`   // Delay before reconnecting on failure (seconds)
+	MaxReconnects    int                `json:"max_reconnects"`    // Maximum reconnection attempts (-1 for unlimited)
+}
+
+// LogSource represents a single log source (local or remote)
+type LogSource struct {
+	Name             string             `json:"name"`              // Friendly name for this source
+	Type             string             `json:"type"`              // "local" or "ssh"
+	Host             string             `json:"host,omitempty"`    // SSH hostname (for remote sources)
+	Port             int                `json:"port,omitempty"`    // SSH port (default: 22)
+	Username         string             `json:"username,omitempty"`// SSH username
+	
+	// SSH Authentication
+	AuthMethod       string             `json:"auth_method"`       // "key", "password", or "key_password"
+	PrivateKeyPath   string             `json:"private_key_path,omitempty"` // Path to SSH private key
+	PrivateKeyData   string             `json:"private_key_data,omitempty"` // SSH private key content (base64)
+	Passphrase       string             `json:"passphrase,omitempty"`       // SSH key passphrase
+	Password         string             `json:"password,omitempty"`         // SSH password
+	
+	// File Configuration
+	FilePath         string             `json:"file_path"`         // Path to log file
+	FollowRotation   bool               `json:"follow_rotation"`   // Handle log rotation
+	StartFromEnd     bool               `json:"start_from_end"`    // Start tailing from end of file
+	
+	// Pattern Matching
+	Patterns         []ExtractionPattern `json:"patterns"`         // Regex patterns for IP/domain extraction
+	
+	// Source-specific settings
+	TTL              int                `json:"ttl,omitempty"`     // TTL override for this source
+	Environment      map[string]string  `json:"environment,omitempty"` // Environment variables for processing
+	Enabled          bool               `json:"enabled"`           // Enable/disable this source
+}
+
+// ExtractionPattern represents a regex pattern for extracting IPs/domains from log lines
+type ExtractionPattern struct {
+	Name             string             `json:"name"`              // Pattern name/description
+	Regex            string             `json:"regex"`             // Regular expression pattern
+	Type             string             `json:"type"`              // "ip", "domain", or "both"
+	IPGroup          int                `json:"ip_group,omitempty"`     // Regex group number for IP (default: 1)
+	DomainGroup      int                `json:"domain_group,omitempty"` // Regex group number for domain (default: 1)
+	ClientIPGroup    int                `json:"client_ip_group,omitempty"` // Optional: extract client IP from same line
+	Enabled          bool               `json:"enabled"`           // Enable/disable this pattern
+	TestString       string             `json:"test_string,omitempty"` // Test string for pattern validation
+}
+
+// LogCollectorStats represents statistics for log collection
+type LogCollectorStats struct {
+	TotalSources     int                `json:"total_sources"`
+	ActiveSources    int                `json:"active_sources"`
+	TotalLinesRead   int64              `json:"total_lines_read"`
+	IPsExtracted     int64              `json:"ips_extracted"`
+	DomainsExtracted int64              `json:"domains_extracted"`
+	ErrorCount       int64              `json:"error_count"`
+	LastActivity     time.Time          `json:"last_activity"`
+	SourceStats      map[string]*SourceStats `json:"source_stats"`
+}
+
+// SourceStats represents statistics for a single log source
+type SourceStats struct {
+	Name             string             `json:"name"`
+	Status           string             `json:"status"`            // "connected", "disconnected", "error"
+	LinesRead        int64              `json:"lines_read"`
+	IPsExtracted     int64              `json:"ips_extracted"`
+	DomainsExtracted int64              `json:"domains_extracted"`
+	LastLine         string             `json:"last_line,omitempty"`
+	LastActivity     time.Time          `json:"last_activity"`
+	ErrorCount       int64              `json:"error_count"`
+	LastError        string             `json:"last_error,omitempty"`
+	ConnectedAt      time.Time          `json:"connected_at,omitempty"`
+	ReconnectCount   int                `json:"reconnect_count"`
+}
+
+// LogEntry represents a processed log entry with extracted data
+type LogEntry struct {
+	Source           string             `json:"source"`            // Source name
+	OriginalLine     string             `json:"original_line"`     // Original log line
+	Timestamp        time.Time          `json:"timestamp"`         // Entry timestamp
+	ExtractedIPs     []string           `json:"extracted_ips"`     // Extracted IP addresses
+	ExtractedDomains []string           `json:"extracted_domains"` // Extracted domain names
+	ClientIP         string             `json:"client_ip,omitempty"` // Client IP if extracted
+	PatternMatched   string             `json:"pattern_matched"`   // Which pattern matched
+	ProcessedAt      time.Time          `json:"processed_at"`      // When dfirewall processed this entry
+}
+
 // ConfigStatus represents configuration status information
 type ConfigStatus struct {
-	ScriptConfig     *ScriptConfiguration `json:"script_config,omitempty"`
-	BlacklistConfig  *BlacklistConfig     `json:"blacklist_config,omitempty"`
-	ReputationConfig *ReputationConfig    `json:"reputation_config,omitempty"`
-	AIConfig         *AIConfig            `json:"ai_config,omitempty"`
-	CustomScriptConfig *CustomScriptConfig `json:"custom_script_config,omitempty"`
-	WebUIAuthConfig  *WebUIAuthConfig     `json:"webui_auth_config,omitempty"`
-	Environment      map[string]string    `json:"environment"`
-	LoadedAt         time.Time            `json:"loaded_at"`
+	ScriptConfig       *ScriptConfiguration `json:"script_config,omitempty"`
+	BlacklistConfig    *BlacklistConfig     `json:"blacklist_config,omitempty"`
+	ReputationConfig   *ReputationConfig    `json:"reputation_config,omitempty"`
+	AIConfig           *AIConfig            `json:"ai_config,omitempty"`
+	CustomScriptConfig *CustomScriptConfig  `json:"custom_script_config,omitempty"`
+	WebUIAuthConfig    *WebUIAuthConfig     `json:"webui_auth_config,omitempty"`
+	LogCollectorConfig *LogCollectorConfig  `json:"log_collector_config,omitempty"`
+	Environment        map[string]string    `json:"environment"`
+	LoadedAt           time.Time            `json:"loaded_at"`
 }

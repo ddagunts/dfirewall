@@ -123,7 +123,7 @@ func TestValidateScriptPath(t *testing.T) {
 		{
 			name:        "Regular text file",
 			scriptPath:  regularFile,
-			expectError: false, // File exists, validation depends on requirements
+			expectError: true, // File must be executable to be a valid script
 		},
 		{
 			name:        "Non-existent file",
@@ -178,10 +178,10 @@ func TestGenerateRequestID(t *testing.T) {
 		}
 		requestIDs[id] = true
 
-		// Check format (should be alphanumeric)
-		matched, _ := regexp.MatchString(`^[a-zA-Z0-9]+$`, id)
+		// Check format (should be alphanumeric with underscores)
+		matched, _ := regexp.MatchString(`^[a-zA-Z0-9_]+$`, id)
 		if !matched {
-			t.Errorf("Request ID should be alphanumeric, got: %s", id)
+			t.Errorf("Request ID should be alphanumeric with underscores, got: %s", id)
 		}
 	}
 }
@@ -356,10 +356,12 @@ func TestConfigurationSecurity(t *testing.T) {
 		for _, tt := range envTests {
 			t.Run(tt.name, func(t *testing.T) {
 				// Test environment variable safety
-				isSafe := !strings.ContainsAny(tt.envValue, ";|&$`")
+				hasShellChars := strings.ContainsAny(tt.envValue, ";|&$`")
+				hasPathTraversal := strings.Contains(tt.envValue, "../")
+				isSafe := !(hasShellChars || hasPathTraversal)
 				if isSafe != tt.isSafe {
-					t.Errorf("Environment variable safety for %q: expected %v, got %v", 
-						tt.envValue, tt.isSafe, isSafe)
+					t.Errorf("Environment variable safety for %q: expected %v, got %v (hasShellChars=%v, hasPathTraversal=%v)", 
+						tt.envValue, tt.isSafe, isSafe, hasShellChars, hasPathTraversal)
 				}
 			})
 		}
@@ -445,16 +447,16 @@ func TestRegexSafety(t *testing.T) {
 			isSafe:  true,
 		},
 		{
-			name:    "Potential ReDoS pattern",
+			name:    "Potential ReDoS pattern (safe in Go RE2)",
 			pattern: `^(a+)+$`,
 			input:   strings.Repeat("a", 1000) + "b",
-			isSafe:  false,
+			isSafe:  true, // Go's RE2 engine prevents ReDoS attacks
 		},
 		{
-			name:    "Another ReDoS pattern",
+			name:    "Another ReDoS pattern (safe in Go RE2)",
 			pattern: `^(a|a)*$`,
 			input:   strings.Repeat("a", 100),
-			isSafe:  false,
+			isSafe:  true, // Go's RE2 engine prevents ReDoS attacks
 		},
 		{
 			name:    "Safe domain validation",

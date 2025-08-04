@@ -342,12 +342,12 @@ func TestValidateClientPattern(t *testing.T) {
 		},
 		{
 			name:        "Valid regex pattern",
-			pattern:     "^192\\.168\\.",
+			pattern:     "regex:^192\\.168\\.",
 			expectError: false,
 		},
 		{
 			name:        "Complex regex pattern",
-			pattern:     "^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)",
+			pattern:     "regex:^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)",
 			expectError: false,
 		},
 		{
@@ -368,7 +368,7 @@ func TestValidateClientPattern(t *testing.T) {
 		{
 			name:        "Invalid IP format",
 			pattern:     "not-an-ip",
-			expectError: false, // Might be treated as regex
+			expectError: true, // Invalid pattern - not IP, CIDR, regex, or wildcard
 		},
 		{
 			name:        "Invalid regex pattern",

@@ -36,4 +36,4 @@ services:
       - "HANDLE_ALL_IPS=1"
     hostname: "dfirewall-test"
     working_dir: /app
-    command: ["go", "test", "-v", "-run", "TestValidationFunctionsAgainstShellInjection|TestExploitAttempts|TestExecuteScriptInputValidation", "./..."]
+    command: ["go", "test", "-v", "./..."]

@@ -59,7 +59,7 @@ func TestLoadScriptConfiguration(t *testing.T) {
 				},
 				Clients: []ClientScriptConfig{
 					{
-						ClientPattern: "^192\\.168\\.",
+						ClientPattern: "regex:^192\\.168\\.",
 						InvokeScript:  "/usr/bin/regex",
 					},
 				},
@@ -216,7 +216,7 @@ func TestFindClientConfig(t *testing.T) {
 				InvokeScript:  "/specific/script",
 			},
 			{
-				ClientPattern: "^172\\.16\\.",
+				ClientPattern: "regex:^172\\.16\\.",
 				InvokeScript:  "/regex/script",
 			},
 		},
@@ -325,19 +325,19 @@ func TestMatchesClientPattern(t *testing.T) {
 		{
 			name:     "Regex match - simple",
 			clientIP: "192.168.1.100",
-			pattern:  "^192\\.168\\.",
+			pattern:  "regex:^192\\.168\\.",
 			expected: true,
 		},
 		{
 			name:     "Regex match - complex",
 			clientIP: "172.16.1.1",
-			pattern:  "^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)",
+			pattern:  "regex:^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)",
 			expected: true,
 		},
 		{
 			name:     "Regex no match",
 			clientIP: "203.0.113.1",
-			pattern:  "^192\\.168\\.",
+			pattern:  "regex:^192\\.168\\.",
 			expected: false,
 		},
 		{
