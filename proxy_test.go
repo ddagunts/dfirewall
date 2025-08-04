@@ -636,9 +636,9 @@ func TestPadTTLForScript(t *testing.T) {
 	
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := padTTLForScript(tt.originalTTL)
+			result := padTTL(tt.originalTTL)
 			if result != tt.expectedTTL {
-				t.Errorf("padTTLForScript(%d) = %d, expected %d", tt.originalTTL, result, tt.expectedTTL)
+				t.Errorf("padTTL(%d) = %d, expected %d", tt.originalTTL, result, tt.expectedTTL)
 			}
 		})
 	}
