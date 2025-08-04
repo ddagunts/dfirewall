@@ -557,8 +557,13 @@ func Register(rt Route) error {
 				err = redisClient.Set(ctx, key, "allowed", ttlDuration).Err()
 				if err != nil {
 					log.Printf("Error storing rule in Redis: %v", err)
-				} else if os.Getenv("DEBUG") != "" {
-					log.Printf("Stored rule in Redis: %s (TTL: %d seconds)", key, rrType.Hdr.Ttl)
+				} else {
+					if isNewRule {
+						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, TTL=%d seconds)", key, from, resolvedIP, domain, rrType.Hdr.Ttl)
+					}
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Stored rule in Redis: %s (TTL: %d seconds)", key, rrType.Hdr.Ttl)
+					}
 				}
 
 				// Update traffic patterns for AI analysis
@@ -632,8 +637,13 @@ func Register(rt Route) error {
 				err = redisClient.Set(ctx, key, "allowed", ttlDuration).Err()
 				if err != nil {
 					log.Printf("Error storing IPv6 rule in Redis: %v", err)
-				} else if os.Getenv("DEBUG") != "" {
-					log.Printf("Stored IPv6 rule in Redis: %s (TTL: %d seconds)", key, rrType.Hdr.Ttl)
+				} else {
+					if isNewRule {
+						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, TTL=%d seconds)", key, from, resolvedIPv6, domain, rrType.Hdr.Ttl)
+					}
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Stored IPv6 rule in Redis: %s (TTL: %d seconds)", key, rrType.Hdr.Ttl)
+					}
 				}
 
 				if invoke != "" || scriptConfig != nil {
