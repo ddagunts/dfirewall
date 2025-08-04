@@ -596,49 +596,49 @@ echo "Script completed successfully"
 	}
 }
 
-func TestPadTTLForScript(t *testing.T) {
+func TestAddGracePeriod(t *testing.T) {
 	tests := []struct {
 		name        string
 		originalTTL uint32
 		expectedTTL uint32
 	}{
 		{
-			name:        "TTL less than 60 seconds should be padded",
+			name:        "Low TTL gets grace period added",
 			originalTTL: 30,
-			expectedTTL: 90, // 30 + 60
+			expectedTTL: 120, // 30 + 90 (default grace period)
 		},
 		{
-			name:        "TTL of exactly 60 seconds should not be padded",
+			name:        "Medium TTL gets grace period added",
 			originalTTL: 60,
-			expectedTTL: 60,
+			expectedTTL: 150, // 60 + 90
 		},
 		{
-			name:        "TTL greater than 60 seconds should not be padded",
+			name:        "High TTL gets grace period added",
 			originalTTL: 300,
-			expectedTTL: 300,
+			expectedTTL: 390, // 300 + 90
 		},
 		{
-			name:        "Very low TTL of 1 second should be padded",
+			name:        "Very low TTL gets grace period added",
 			originalTTL: 1,
-			expectedTTL: 61, // 1 + 60
+			expectedTTL: 91, // 1 + 90
 		},
 		{
-			name:        "TTL of 0 should be padded",
+			name:        "Zero TTL gets grace period added",
 			originalTTL: 0,
-			expectedTTL: 60, // 0 + 60
+			expectedTTL: 90, // 0 + 90
 		},
 		{
-			name:        "Large TTL should remain unchanged",
+			name:        "Large TTL gets grace period added",
 			originalTTL: 3600,
-			expectedTTL: 3600,
+			expectedTTL: 3690, // 3600 + 90
 		},
 	}
 	
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := padTTL(tt.originalTTL)
+			result := addGracePeriod(tt.originalTTL)
 			if result != tt.expectedTTL {
-				t.Errorf("padTTL(%d) = %d, expected %d", tt.originalTTL, result, tt.expectedTTL)
+				t.Errorf("addGracePeriod(%d) = %d, expected %d", tt.originalTTL, result, tt.expectedTTL)
 			}
 		})
 	}

@@ -141,6 +141,7 @@ Optional:
 - `WEBUI_SESSION_SECRET`: Secret key for session signing (auto-generated if not provided)
 - `WEBUI_SESSION_EXPIRY`: Session expiry time in hours (default: 24)
 - `LOG_COLLECTOR_CONFIG`: Path to JSON configuration file for log collection from remote/local sources
+- `TTL_GRACE_PERIOD_SECONDS`: Grace period in seconds added to all DNS TTLs before firewall rules expire (default: 90)
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
 - `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support
 - `DEBUG`: Enable verbose logging

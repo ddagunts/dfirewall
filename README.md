@@ -28,6 +28,7 @@ REDIS=redis://127.0.0.1:6379 # Redis connection string
 # Optional
 PORT=53                      # listening port
 WEB_UI_PORT=8080            # web interface port
+TTL_GRACE_PERIOD_SECONDS=90 # grace period added to all DNS TTLs (default: 90)
 DEBUG=true                  # enable verbose logging
 ```
 # Setup on Linux
@@ -50,8 +51,10 @@ EXPIRE_SCRIPT=./scripts/expire_generic.sh
 
 When enabled, dfirewall will:
 1. Monitor Redis keyspace notifications for expired keys
-2. Execute your expire script when DNS TTLs expire
+2. Execute your expire script when DNS TTLs + grace period expire
 3. Pass the same environment variables as INVOKE_SCRIPT, plus `ACTION=EXPIRE`
+
+**TTL Grace Period**: All DNS TTLs are extended with a configurable grace period (default 90 seconds) before firewall rules are removed. This prevents premature rule expiration and provides a buffer for DNS refresh cycles. Configure via `TTL_GRACE_PERIOD_SECONDS` environment variable.
 
 **Redis Configuration Note**: Redis keyspace notifications must be enabled. dfirewall attempts to enable this automatically, but if it fails, run:
 ```bash

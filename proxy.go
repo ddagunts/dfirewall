@@ -18,19 +18,19 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Global configuration for TTL grace period
+var ttlGracePeriodSeconds uint32 = 90 // Default grace period of 90 seconds after DNS TTL expiration
+
 // inRange checks if IP is within the specified range
 func inRange(ipLow, ipHigh, ip netip.Addr) bool {
 	return ip.Compare(ipLow) >= 0 && ip.Compare(ipHigh) <= 0
 }
 
-// padTTL pads TTL values less than 60 seconds by adding 60 seconds
-// This prevents firewall rules from expiring prematurely for very low TTL values
+// addGracePeriod adds a configurable grace period to ALL DNS TTLs
+// This provides a buffer time after DNS TTL expiration before firewall rules are removed
 // Applied to both Redis storage and script execution for consistency
-func padTTL(originalTTL uint32) uint32 {
-	if originalTTL < 60 {
-		return originalTTL + 60
-	}
-	return originalTTL
+func addGracePeriod(originalTTL uint32) uint32 {
+	return originalTTL + ttlGracePeriodSeconds
 }
 
 // Register sets up the DNS proxy and starts handling DNS requests
@@ -48,6 +48,16 @@ func Register(rt Route) error {
 
 	// HANDLE_ALL_IPS: when set, process all A records instead of just the first one
 	handleAllIPs := os.Getenv("HANDLE_ALL_IPS")
+
+	// TTL_GRACE_PERIOD_SECONDS: configurable grace period added to all DNS TTLs (default: 90 seconds)
+	if gracePeriodEnv := os.Getenv("TTL_GRACE_PERIOD_SECONDS"); gracePeriodEnv != "" {
+		if parsed, err := strconv.ParseUint(gracePeriodEnv, 10, 32); err == nil {
+			ttlGracePeriodSeconds = uint32(parsed)
+			log.Printf("TTL grace period configured to %d seconds", ttlGracePeriodSeconds)
+		} else {
+			log.Printf("Invalid TTL_GRACE_PERIOD_SECONDS value '%s', using default %d seconds", gracePeriodEnv, ttlGracePeriodSeconds)
+		}
+	}
 
 	redisEnv := os.Getenv("REDIS")
 	if redisEnv == "" {
@@ -476,16 +486,12 @@ func Register(rt Route) error {
 					}
 				}
 				
-				// Create padded TTL for both Redis storage and script execution (original TTL + 60 seconds if TTL < 60)
-				paddedTTL := padTTL(rrType.Hdr.Ttl)
-				ttl := strconv.FormatUint(uint64(paddedTTL), 10)
+				// Add grace period to TTL for both Redis storage and script execution
+				ttlWithGrace := addGracePeriod(rrType.Hdr.Ttl)
+				ttl := strconv.FormatUint(uint64(ttlWithGrace), 10)
 
 				if os.Getenv("DEBUG") != "" {
-					if paddedTTL != rrType.Hdr.Ttl {
-						log.Printf("A record: %s -> %s (DNS TTL: %d, Padded TTL: %s)", domain, resolvedIP, rrType.Hdr.Ttl, ttl)
-					} else {
-						log.Printf("A record: %s -> %s (TTL: %s)", domain, resolvedIP, ttl)
-					}
+					log.Printf("A record: %s -> %s (DNS TTL: %d, Redis TTL with grace: %s)", domain, resolvedIP, rrType.Hdr.Ttl, ttl)
 				}
 
 				// FEATURE: IP blacklist checking after DNS resolution
@@ -550,8 +556,8 @@ func Register(rt Route) error {
 
 				isNewRule := exists == 0
 				
-				// Store in Redis with padded TTL (minimum 1 second to avoid Redis timeout warnings)
-				ttlDuration := time.Duration(paddedTTL) * time.Second
+				// Store in Redis with TTL + grace period (minimum 1 second to avoid Redis timeout warnings)
+				ttlDuration := time.Duration(ttlWithGrace) * time.Second
 				if ttlDuration < 1*time.Second {
 					ttlDuration = 1 * time.Second
 				}
@@ -560,10 +566,10 @@ func Register(rt Route) error {
 					log.Printf("Error storing rule in Redis: %v", err)
 				} else {
 					if isNewRule {
-						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIP, domain, rrType.Hdr.Ttl, paddedTTL)
+						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIP, domain, rrType.Hdr.Ttl, ttlWithGrace)
 					}
 					if os.Getenv("DEBUG") != "" {
-						log.Printf("Stored rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, paddedTTL)
+						log.Printf("Stored rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, ttlWithGrace)
 					}
 				}
 
@@ -595,16 +601,12 @@ func Register(rt Route) error {
 					}
 				}
 				
-				// Create padded TTL for both Redis storage and script execution (original TTL + 60 seconds if TTL < 60)
-				paddedTTL := padTTL(rrType.Hdr.Ttl)
-				ttl := strconv.FormatUint(uint64(paddedTTL), 10)
+				// Add grace period to TTL for both Redis storage and script execution
+				ttlWithGrace := addGracePeriod(rrType.Hdr.Ttl)
+				ttl := strconv.FormatUint(uint64(ttlWithGrace), 10)
 
 				if os.Getenv("DEBUG") != "" {
-					if paddedTTL != rrType.Hdr.Ttl {
-						log.Printf("AAAA record: %s -> %s (DNS TTL: %d, Padded TTL: %s)", domain, resolvedIPv6, rrType.Hdr.Ttl, ttl)
-					} else {
-						log.Printf("AAAA record: %s -> %s (TTL: %s)", domain, resolvedIPv6, ttl)
-					}
+					log.Printf("AAAA record: %s -> %s (DNS TTL: %d, Redis TTL with grace: %s)", domain, resolvedIPv6, rrType.Hdr.Ttl, ttl)
 				}
 
 				// Similar processing for IPv6
@@ -630,8 +632,8 @@ func Register(rt Route) error {
 
 				isNewRule := exists == 0
 				
-				// Store in Redis with padded TTL (minimum 1 second to avoid Redis timeout warnings)
-				ttlDuration := time.Duration(paddedTTL) * time.Second
+				// Store in Redis with TTL + grace period (minimum 1 second to avoid Redis timeout warnings)
+				ttlDuration := time.Duration(ttlWithGrace) * time.Second
 				if ttlDuration < 1*time.Second {
 					ttlDuration = 1 * time.Second
 				}
@@ -640,10 +642,10 @@ func Register(rt Route) error {
 					log.Printf("Error storing IPv6 rule in Redis: %v", err)
 				} else {
 					if isNewRule {
-						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIPv6, domain, rrType.Hdr.Ttl, paddedTTL)
+						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIPv6, domain, rrType.Hdr.Ttl, ttlWithGrace)
 					}
 					if os.Getenv("DEBUG") != "" {
-						log.Printf("Stored IPv6 rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, paddedTTL)
+						log.Printf("Stored IPv6 rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, ttlWithGrace)
 					}
 				}
 
