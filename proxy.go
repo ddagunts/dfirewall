@@ -742,23 +742,38 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 	
 	// Execute script in background to avoid blocking DNS responses
 	go func() {
-		// Sanitize inputs for security
-		safeClientIP := sanitizeForShell(clientIP)
-		safeResolvedIP := sanitizeForShell(resolvedIP)
-		safeDomain := sanitizeForShell(domain)
-		safeTTL := sanitizeForShell(ttl)
-		safeAction := sanitizeForShell(action)
+		// Validate inputs for security - reject if invalid
+		if err := validateForShellExecution(clientIP, "ip"); err != nil {
+			log.Printf("Script execution aborted: %v", err)
+			return
+		}
+		if err := validateForShellExecution(resolvedIP, "ip"); err != nil {
+			log.Printf("Script execution aborted: %v", err)
+			return
+		}
+		if err := validateForShellExecution(domain, "domain"); err != nil {
+			log.Printf("Script execution aborted: %v", err)
+			return
+		}
+		if err := validateForShellExecution(ttl, "ttl"); err != nil {
+			log.Printf("Script execution aborted: %v", err)
+			return
+		}
+		if err := validateForShellExecution(action, "action"); err != nil {
+			log.Printf("Script execution aborted: %v", err)
+			return
+		}
 		
 		if os.Getenv("DEBUG") != "" {
-			log.Printf("Executing script: %s %s %s %s %s %s", scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
+			log.Printf("Executing script: %s %s %s %s %s %s", scriptPath, clientIP, resolvedIP, domain, ttl, action)
 		}
 		
 		// Execute with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		
-		// Create command with context and arguments
-		cmd := exec.CommandContext(ctx, scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
+		// Create command with context and arguments - inputs are validated, safe to use directly
+		cmd := exec.CommandContext(ctx, scriptPath, clientIP, resolvedIP, domain, ttl, action)
 		
 		// Set environment variables (start with minimal base environment)
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}

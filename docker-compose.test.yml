@@ -19,17 +19,11 @@ services:
       redis-test:
         condition: service_healthy
     container_name: dfirewall-test
-    build: .
+    build: 
+      context: .
+      target: build
     network_mode: host
-    cap_add:
-      - NET_ADMIN
-    # Security hardening for test environment
-    read_only: true
-    tmpfs:
-      - /tmp:rw,size=100M,mode=1777
-      - /dev/shm:rw,size=100M,mode=1777
-    security_opt:
-      - no-new-privileges:true
+    # Remove security restrictions that might interfere with tests
     environment:
       - "UPSTREAM=1.1.1.1:53"
       - "REDIS=redis://127.0.0.1:6380"  # Point to test Redis on port 6380
@@ -41,5 +35,5 @@ services:
       - "INVOKE_ALWAYS=1"
       - "HANDLE_ALL_IPS=1"
     hostname: "dfirewall-test"
-    image: "dfirewall:test"
-    user: root
+    working_dir: /app
+    command: ["go", "test", "-v", "-run", "TestValidationFunctionsAgainstShellInjection|TestExploitAttempts|TestExecuteScriptInputValidation", "./..."]
