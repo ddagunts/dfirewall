@@ -29,6 +29,7 @@ copy config config
 # UDP and TCP
 expose 53
 
+# Default unprivileged user (override in docker-compose.yml if firewall scripts need privileges)
 user nobody:nogroup
 
 entrypoint ["/dfirewall"]

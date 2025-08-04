@@ -15,7 +15,7 @@ It allows to create an IP firewall with the following features:
 
 # Configuration
 
-dfirewall is configured through environment variables and JSON configuration files for advanced features.
+dfirewall is configured entirely through environment variables and JSON configuration files for advanced features. There are no command-line arguments - all configuration is done via environment variables.
 
 **📖 For comprehensive configuration guidance, see:** [docs/configuration.md](docs/configuration.md)
 

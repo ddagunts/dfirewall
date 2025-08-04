@@ -352,11 +352,8 @@ Rules are evaluated in the following priority order:
 
 #### Configuration Validation
 ```bash
-# Test configuration syntax
+# Test and validate configuration syntax
 jq . /config/upstream-config.json
-
-# Validate patterns with dfirewall
-./dfirewall -config-test /config/upstream-config.json
 ```
 
 #### Integration with Environment Variables

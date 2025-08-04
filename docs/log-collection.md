@@ -358,15 +358,21 @@ Extracted IP addresses and domains automatically flow through dfirewall's securi
 Use the `test_string` field in pattern configurations to validate regex patterns:
 
 ```bash
-# Test configuration file patterns
-go run . -validate-patterns /path/to/log-collector-config.json
+# Test configuration file syntax
+jq . /path/to/log-collector-config.json
+
+# Pattern validation occurs at runtime when dfirewall starts
+# Check logs for regex compilation errors
 ```
 
 ### Configuration Testing
 
 ```bash
-# Test entire configuration file
-go run . -config-test /path/to/log-collector-config.json
+# Validate JSON syntax and structure
+jq . /path/to/log-collector-config.json
+
+# Test patterns manually with sample log lines
+echo "sample log line" | grep -E "your_regex_pattern"
 ```
 
 ## Monitoring and Statistics
@@ -389,7 +395,7 @@ These can be viewed through the Web UI or accessed directly via Redis.
 
 **Pattern Matching Issues:**
 - Use the `test_string` field to validate regex patterns
-- Run pattern validation with `-validate-patterns`
+- Test regex patterns manually with sample log data
 - Check logs for regex compilation errors
 
 **Performance Issues:**
