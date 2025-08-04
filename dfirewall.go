@@ -51,7 +51,7 @@ func main() {
 
 	log.Printf("dfirewall started")
 
-	sig := make(chan os.Signal)
+	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	s := <-sig
 	log.Fatalf("Signal (%v) received, stopping", s)
