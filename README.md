@@ -28,6 +28,7 @@ REDIS=redis://127.0.0.1:6379 # Redis connection string
 # Optional
 PORT=53                      # listening port
 WEB_UI_PORT=8080            # web interface port
+UPSTREAM_CONFIG=config/upstream-config.json  # per-client/zone upstream routing
 TTL_GRACE_PERIOD_SECONDS=90 # grace period added to all DNS TTLs (default: 90)
 DEBUG=true                  # enable verbose logging
 ```

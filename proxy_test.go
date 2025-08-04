@@ -643,3 +643,148 @@ func TestAddGracePeriod(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectUpstreamResolver(t *testing.T) {
+	tests := []struct {
+		name            string
+		clientIP        string
+		domain          string
+		defaultUpstream string
+		upstreamConfig  *UpstreamConfig
+		expectedResult  string
+	}{
+		{
+			name:            "No configuration - use default",
+			clientIP:        "192.168.1.100",
+			domain:          "example.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig:  nil,
+			expectedResult:  "1.1.1.1:53",
+		},
+		{
+			name:            "Client-specific rule matches",
+			clientIP:        "192.168.1.100",
+			domain:          "example.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig: &UpstreamConfig{
+				DefaultUpstream: "8.8.8.8:53",
+				ClientConfigs: []UpstreamClientConfig{
+					{ClientPattern: "192.168.1.0/24", Upstream: "9.9.9.9:53"},
+				},
+			},
+			expectedResult: "9.9.9.9:53",
+		},
+		{
+			name:            "Zone-specific rule matches",
+			clientIP:        "10.0.0.100",
+			domain:          "internal.company.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig: &UpstreamConfig{
+				DefaultUpstream: "8.8.8.8:53",
+				ZoneConfigs: []UpstreamZoneConfig{
+					{ZonePattern: "*.company.com", Upstream: "10.0.1.10:53"},
+				},
+			},
+			expectedResult: "10.0.1.10:53",
+		},
+		{
+			name:            "Client rule takes precedence over zone rule",
+			clientIP:        "192.168.1.100",
+			domain:          "internal.company.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig: &UpstreamConfig{
+				DefaultUpstream: "8.8.8.8:53",
+				ClientConfigs: []UpstreamClientConfig{
+					{ClientPattern: "192.168.1.100", Upstream: "9.9.9.9:53"},
+				},
+				ZoneConfigs: []UpstreamZoneConfig{
+					{ZonePattern: "*.company.com", Upstream: "10.0.1.10:53"},
+				},
+			},
+			expectedResult: "9.9.9.9:53",
+		},
+		{
+			name:            "Use configured default when no rules match",
+			clientIP:        "10.0.0.100",
+			domain:          "example.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig: &UpstreamConfig{
+				DefaultUpstream: "8.8.8.8:53",
+				ClientConfigs: []UpstreamClientConfig{
+					{ClientPattern: "192.168.1.0/24", Upstream: "9.9.9.9:53"},
+				},
+			},
+			expectedResult: "8.8.8.8:53",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := selectUpstreamResolver(tt.clientIP, tt.domain, tt.defaultUpstream, tt.upstreamConfig)
+			if result != tt.expectedResult {
+				t.Errorf("selectUpstreamResolver() = %v, expected %v", result, tt.expectedResult)
+			}
+		})
+	}
+}
+
+func TestMatchesZonePattern(t *testing.T) {
+	tests := []struct {
+		name     string
+		domain   string
+		pattern  string
+		expected bool
+	}{
+		{
+			name:     "Exact match",
+			domain:   "example.com",
+			pattern:  "example.com",
+			expected: true,
+		},
+		{
+			name:     "Wildcard match - subdomain",
+			domain:   "sub.example.com",
+			pattern:  "*.example.com",
+			expected: true,
+		},
+		{
+			name:     "Wildcard match - exact domain",
+			domain:   "example.com",
+			pattern:  "*.example.com",
+			expected: true,
+		},
+		{
+			name:     "Wildcard no match",
+			domain:   "different.com",
+			pattern:  "*.example.com",
+			expected: false,
+		},
+		{
+			name:     "Regex match",
+			domain:   "test.local",
+			pattern:  "^.*\\.local$",
+			expected: true,
+		},
+		{
+			name:     "Regex no match",
+			domain:   "test.com",
+			pattern:  "^.*\\.local$",
+			expected: false,
+		},
+		{
+			name:     "Empty pattern",
+			domain:   "example.com",
+			pattern:  "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesZonePattern(tt.domain, tt.pattern)
+			if result != tt.expected {
+				t.Errorf("matchesZonePattern(%q, %q) = %v, expected %v", tt.domain, tt.pattern, result, tt.expected)
+			}
+		})
+	}
+}

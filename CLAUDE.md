@@ -33,6 +33,7 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 ### Key Features
 
 - DNS interception and forwarding to upstream resolvers
+- **Per-client and per-zone upstream resolver routing with priority-based selection**
 - Redis storage for tracking client IP → resolved IP → domain mappings with TTL expiration
 - Dynamic firewall rule creation via executable scripts
 - Per-client script configuration with pattern matching (IP, CIDR, regex)
@@ -141,6 +142,7 @@ Optional:
 - `WEBUI_SESSION_SECRET`: Secret key for session signing (auto-generated if not provided)
 - `WEBUI_SESSION_EXPIRY`: Session expiry time in hours (default: 24)
 - `LOG_COLLECTOR_CONFIG`: Path to JSON configuration file for log collection from remote/local sources
+- `UPSTREAM_CONFIG`: Path to JSON configuration file for per-client and per-zone upstream resolver routing
 - `TTL_GRACE_PERIOD_SECONDS`: Grace period in seconds added to all DNS TTLs before firewall rules expire (default: 90)
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
 - `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support
@@ -197,6 +199,70 @@ The application runs in containers with:
 ## Security Considerations
 
 This is experimental defensive security software intended for network egress control. The application requires elevated privileges (NET_ADMIN) to manage firewall rules and should only be deployed in controlled environments with proper network isolation.
+
+## Upstream Resolver Configuration
+
+dfirewall supports flexible upstream DNS resolver routing based on client IP addresses and domain patterns. This allows for sophisticated DNS forwarding policies.
+
+### Configuration Priority
+
+1. **Client-specific rules** (highest priority) - Route based on requesting client IP
+2. **Zone-specific rules** (medium priority) - Route based on requested domain
+3. **Default upstream** (lowest priority) - Fallback for unmatched requests
+
+### Configuration File Format
+
+Set `UPSTREAM_CONFIG` environment variable to a JSON configuration file:
+
+```json
+{
+  "default_upstream": "1.1.1.1:53",
+  "client_configs": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "upstream": "8.8.8.8:53",
+      "description": "Internal network uses Google DNS"
+    },
+    {
+      "client_pattern": "^172\\.16\\..*",
+      "upstream": "208.67.222.222:53",
+      "description": "Docker network uses OpenDNS (regex)"
+    }
+  ],
+  "zone_configs": [
+    {
+      "zone_pattern": "*.internal.company.com",
+      "upstream": "10.0.1.10:53",
+      "description": "Internal domains to internal DNS"
+    },
+    {
+      "zone_pattern": "^.*\\.local$",
+      "upstream": "127.0.0.1:5353",
+      "description": ".local domains to mDNS (regex)"
+    }
+  ]
+}
+```
+
+### Pattern Matching
+
+**Client Patterns** support:
+- **Exact IP**: `192.168.1.100`
+- **CIDR notation**: `192.168.1.0/24`
+- **Regex patterns**: `^172\\.16\\..*` (for complex matching)
+
+**Zone Patterns** support:
+- **Exact domain**: `example.com`
+- **Wildcard**: `*.example.com` (matches subdomains and exact domain)
+- **Regex patterns**: `^.*\\.local$` (for complex matching)
+
+### Use Cases
+
+- **Split-horizon DNS**: Internal domains to internal DNS, external to public DNS
+- **Per-network routing**: Different subnets use different DNS servers
+- **Security policies**: Route suspicious clients to filtered DNS services
+- **Geographic routing**: Route based on client location to regional DNS servers
+- **Development environments**: Route test domains to development DNS servers
 
 ## Important Implementation Notes
 

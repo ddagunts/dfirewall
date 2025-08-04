@@ -33,6 +33,63 @@ func addGracePeriod(originalTTL uint32) uint32 {
 	return originalTTL + ttlGracePeriodSeconds
 }
 
+// selectUpstreamResolver determines which upstream resolver to use based on client IP and domain
+// Priority: client-specific rules > zone-specific rules > default upstream
+func selectUpstreamResolver(clientIP, domain, defaultUpstream string, upstreamConfig *UpstreamConfig) string {
+	if upstreamConfig == nil {
+		return defaultUpstream
+	}
+
+	// Check client-specific rules first (highest priority)
+	for _, clientConfig := range upstreamConfig.ClientConfigs {
+		if matchesClientPattern(clientIP, clientConfig.ClientPattern) {
+			return clientConfig.Upstream
+		}
+	}
+
+	// Check zone-specific rules second
+	for _, zoneConfig := range upstreamConfig.ZoneConfigs {
+		if matchesZonePattern(domain, zoneConfig.ZonePattern) {
+			return zoneConfig.Upstream
+		}
+	}
+
+	// Use configured default upstream if available, otherwise fall back to environment variable
+	if upstreamConfig.DefaultUpstream != "" {
+		return upstreamConfig.DefaultUpstream
+	}
+
+	return defaultUpstream
+}
+
+// matchesZonePattern checks if a domain matches a zone pattern
+// Supports exact matches, wildcards (*.example.com), and regex patterns
+func matchesZonePattern(domain, pattern string) bool {
+	if pattern == "" {
+		return false
+	}
+
+	// Exact match
+	if domain == pattern {
+		return true
+	}
+
+	// Wildcard pattern (*.example.com)
+	if strings.HasPrefix(pattern, "*.") {
+		suffix := pattern[2:] // Remove "*."
+		return strings.HasSuffix(domain, "."+suffix) || domain == suffix
+	}
+
+	// Try regex pattern (if it contains regex metacharacters)
+	if strings.ContainsAny(pattern, "^$()[]{}|+?\\") {
+		if matched, err := regexp.MatchString(pattern, domain); err == nil {
+			return matched
+		}
+	}
+
+	return false
+}
+
 // Register sets up the DNS proxy and starts handling DNS requests
 func Register(rt Route) error {
 	// Validate zone parameter - empty zones are not allowed
@@ -199,6 +256,21 @@ func Register(rt Route) error {
 			logCollectorConfigPath, logCollectorConfig.Enabled, len(logCollectorConfig.Sources))
 	} else {
 		log.Printf("LOG_COLLECTOR_CONFIG env var not set, log collection disabled")
+	}
+
+	// UPSTREAM_CONFIG: JSON configuration file for per-client and per-zone upstream resolvers
+	var upstreamConfig *UpstreamConfig
+	upstreamConfigPath := os.Getenv("UPSTREAM_CONFIG")
+	if upstreamConfigPath != "" {
+		config, err := loadUpstreamConfiguration(upstreamConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load upstream configuration: %v", err)
+		}
+		upstreamConfig = config
+		log.Printf("UPSTREAM_CONFIG loaded from %s: default=%s, clients=%d, zones=%d", 
+			upstreamConfigPath, config.DefaultUpstream, len(config.ClientConfigs), len(config.ZoneConfigs))
+	} else {
+		log.Printf("UPSTREAM_CONFIG env var not set, using single upstream resolver from UPSTREAM env var")
 	}
 
 	var redisClient *redis.Client
@@ -463,8 +535,21 @@ func Register(rt Route) error {
 			}
 		}
 
-		// Query upstream DNS
-		resp, _, err := c.Exchange(r, upstream)
+		// Determine which upstream resolver to use based on client IP and requested domain
+		requestedDomain := ""
+		if len(r.Question) > 0 {
+			requestedDomain = strings.TrimSuffix(r.Question[0].Name, ".")
+		}
+		
+		selectedUpstream := selectUpstreamResolver(from, requestedDomain, upstream, upstreamConfig)
+		
+		if os.Getenv("DEBUG") != "" && selectedUpstream != upstream {
+			log.Printf("Selected upstream %s for client %s querying %s (default: %s)", 
+				selectedUpstream, from, requestedDomain, upstream)
+		}
+
+		// Query selected upstream DNS
+		resp, _, err := c.Exchange(r, selectedUpstream)
 		if err != nil {
 			log.Printf("Error querying upstream DNS: %v", err)
 			dns.HandleFailed(w, r)
@@ -872,4 +957,44 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 			log.Printf("Script output: %s", string(output))
 		}
 	}()
+}
+
+// loadUpstreamConfiguration loads upstream resolver configuration from JSON file
+func loadUpstreamConfiguration(configPath string) (*UpstreamConfig, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read upstream config file: %v", err)
+	}
+	
+	var config UpstreamConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse upstream JSON config: %v", err)
+	}
+	
+	// Validate default upstream
+	if config.DefaultUpstream == "" {
+		return nil, fmt.Errorf("default_upstream cannot be empty")
+	}
+	
+	// Validate client configurations
+	for i, clientConfig := range config.ClientConfigs {
+		if clientConfig.ClientPattern == "" {
+			return nil, fmt.Errorf("client_configs[%d]: client_pattern cannot be empty", i)
+		}
+		if clientConfig.Upstream == "" {
+			return nil, fmt.Errorf("client_configs[%d]: upstream cannot be empty", i)
+		}
+	}
+	
+	// Validate zone configurations
+	for i, zoneConfig := range config.ZoneConfigs {
+		if zoneConfig.ZonePattern == "" {
+			return nil, fmt.Errorf("zone_configs[%d]: zone_pattern cannot be empty", i)
+		}
+		if zoneConfig.Upstream == "" {
+			return nil, fmt.Errorf("zone_configs[%d]: upstream cannot be empty", i)
+		}
+	}
+	
+	return &config, nil
 }
