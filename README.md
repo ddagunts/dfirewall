@@ -32,6 +32,40 @@ UPSTREAM_CONFIG=config/upstream-config.json  # per-client/zone upstream routing
 TTL_GRACE_PERIOD_SECONDS=90 # grace period added to all DNS TTLs (default: 90)
 DEBUG=true                  # enable verbose logging
 ```
+
+## Advanced Upstream DNS Routing
+
+dfirewall supports sophisticated upstream DNS resolver routing based on client IP addresses and domain patterns. This enables network segmentation, geographic routing, split-horizon DNS, and specialized DNS services per client or domain.
+
+### Key Features
+- **Per-client routing**: Route DNS queries from specific clients/networks to different upstream resolvers
+- **Per-zone routing**: Route specific domains to different upstream resolvers  
+- **Priority-based**: Client rules take precedence over zone rules
+- **Flexible patterns**: Support for exact matches, CIDR notation, wildcards, and regex patterns
+- **Fallback support**: Configurable default upstream when no rules match
+
+### Quick Example
+```json
+{
+  "default_upstream": "1.1.1.1:53",
+  "client_configs": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "upstream": "8.8.8.8:53",
+      "description": "Internal network uses Google DNS"
+    }
+  ],
+  "zone_configs": [
+    {
+      "zone_pattern": "*.company.com",
+      "upstream": "10.0.1.10:53", 
+      "description": "Company domains use internal DNS"
+    }
+  ]
+}
+```
+
+**📖 For comprehensive upstream routing configuration, see:** [docs/configuration.md](docs/configuration.md#upstream-configuration-upstream_config)
 # Setup on Linux
 
 dfirewall can be deployed as a network router with firewall capabilities.  The easiest platform to do this on is Linux thanks to ipset.
