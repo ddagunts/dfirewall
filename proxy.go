@@ -794,9 +794,12 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 			log.Printf("Script execution aborted: %v", err)
 			return
 		}
-		if err := validateForShellExecution(ttl, "ttl"); err != nil {
-			log.Printf("Script execution aborted: %v", err)
-			return
+		// Skip TTL validation for expiration events since TTL=0 has special meaning
+		if action != "EXPIRE" {
+			if err := validateForShellExecution(ttl, "ttl"); err != nil {
+				log.Printf("Script execution aborted: %v", err)
+				return
+			}
 		}
 		if err := validateForShellExecution(action, "action"); err != nil {
 			log.Printf("Script execution aborted: %v", err)

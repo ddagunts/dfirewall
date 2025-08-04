@@ -2015,13 +2015,18 @@ func validateTTLForExecution(ttl string) bool {
 
 // validateActionForExecution validates action strings for shell execution
 func validateActionForExecution(action string) bool {
-	// Only allow specific predefined actions
+	// Only allow specific predefined actions (case-insensitive)
 	allowedActions := map[string]bool{
 		"add":    true,
 		"remove": true,
 		"expire": true,
 		"allow":  true,
 		"deny":   true,
+		"ADD":    true,
+		"REMOVE": true,
+		"EXPIRE": true,
+		"ALLOW":  true,
+		"DENY":   true,
 	}
 	
 	return allowedActions[action]
