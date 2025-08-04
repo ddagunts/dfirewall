@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +22,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 var (
@@ -162,6 +165,11 @@ func validateLogSource(source *LogSource) error {
 		default:
 			return fmt.Errorf("invalid auth_method: %s (must be 'key', 'password', or 'key_password')", source.AuthMethod)
 		}
+
+		// Validate SSH host key verification settings
+		if err := validateSSHHostKeyConfig(source); err != nil {
+			return fmt.Errorf("SSH host key configuration error: %v", err)
+		}
 	}
 
 	// Validate patterns
@@ -172,6 +180,70 @@ func validateLogSource(source *LogSource) error {
 	}
 
 	return nil
+}
+
+// validateSSHHostKeyConfig validates SSH host key verification configuration
+func validateSSHHostKeyConfig(source *LogSource) error {
+	verification := source.HostKeyVerification
+	if verification == "" {
+		// Default to strict mode, which is secure
+		return nil
+	}
+
+	switch verification {
+	case "insecure":
+		// Allow but warn - this will be logged during connection
+		return nil
+
+	case "known_hosts":
+		// Validate known_hosts file path if specified
+		if source.KnownHostsFile != "" {
+			if _, err := os.Stat(source.KnownHostsFile); os.IsNotExist(err) {
+				return fmt.Errorf("specified known_hosts file does not exist: %s", source.KnownHostsFile)
+			}
+		}
+		return nil
+
+	case "fingerprint":
+		if source.HostKeyFingerprint == "" {
+			return fmt.Errorf("host_key_fingerprint is required when using fingerprint verification")
+		}
+
+		fingerprint := source.HostKeyFingerprint
+		// Remove SHA256: prefix if present
+		if strings.HasPrefix(fingerprint, "SHA256:") {
+			fingerprint = strings.TrimPrefix(fingerprint, "SHA256:")
+		}
+
+		// Validate that it's a valid base64 string (SHA256 fingerprints are 32 bytes = 44 base64 chars)
+		// or valid hex string (64 hex chars)
+		if len(fingerprint) != 44 && len(fingerprint) != 64 {
+			return fmt.Errorf("invalid host_key_fingerprint format (expected SHA256 base64 or hex)")
+		}
+
+		// Try to decode as base64
+		if len(fingerprint) == 44 {
+			if _, err := base64.StdEncoding.DecodeString(fingerprint); err != nil {
+				return fmt.Errorf("invalid host_key_fingerprint: not valid base64")
+			}
+		}
+
+		// Try to decode as hex
+		if len(fingerprint) == 64 {
+			if _, err := hex.DecodeString(fingerprint); err != nil {
+				return fmt.Errorf("invalid host_key_fingerprint: not valid hex")
+			}
+		}
+
+		return nil
+
+	case "strict":
+		// Strict mode is always valid - it will try known_hosts first, then fingerprint if available
+		return nil
+
+	default:
+		return fmt.Errorf("invalid host_key_verification method: %s (must be 'strict', 'known_hosts', 'fingerprint', or 'insecure')", verification)
+	}
 }
 
 // validateExtractionPattern validates a regex extraction pattern
@@ -358,6 +430,103 @@ func (c *LogCollector) Start() error {
 	}
 }
 
+// createHostKeyCallback creates the appropriate SSH host key verification callback
+func (c *LogCollector) createHostKeyCallback() (ssh.HostKeyCallback, error) {
+	verification := c.Source.HostKeyVerification
+	if verification == "" {
+		verification = "strict" // Default to strict verification
+	}
+
+	switch verification {
+	case "insecure":
+		log.Printf("WARNING: SSH host key verification disabled for %s - this is insecure!", c.Source.Name)
+		return ssh.InsecureIgnoreHostKey(), nil
+
+	case "known_hosts":
+		knownHostsFile := c.Source.KnownHostsFile
+		if knownHostsFile == "" {
+			// Use default known_hosts file
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get home directory: %v", err)
+			}
+			knownHostsFile = filepath.Join(homeDir, ".ssh", "known_hosts")
+		}
+
+		// Check if known_hosts file exists
+		if _, err := os.Stat(knownHostsFile); os.IsNotExist(err) {
+			return nil, fmt.Errorf("known_hosts file not found: %s", knownHostsFile)
+		}
+
+		callback, err := knownhosts.New(knownHostsFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load known_hosts file %s: %v", knownHostsFile, err)
+		}
+		
+		log.Printf("Using known_hosts file for SSH host key verification: %s", knownHostsFile)
+		return callback, nil
+
+	case "fingerprint":
+		if c.Source.HostKeyFingerprint == "" {
+			return nil, fmt.Errorf("host_key_fingerprint is required when using fingerprint verification")
+		}
+
+		expectedFingerprint := c.Source.HostKeyFingerprint
+		// Remove common prefixes if present
+		if strings.HasPrefix(expectedFingerprint, "SHA256:") {
+			expectedFingerprint = strings.TrimPrefix(expectedFingerprint, "SHA256:")
+		}
+
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			// Calculate SHA256 fingerprint
+			hash := sha256.Sum256(key.Marshal())
+			fingerprint := base64.StdEncoding.EncodeToString(hash[:])
+			
+			if fingerprint != expectedFingerprint {
+				// Also try hex encoding for compatibility
+				hexFingerprint := hex.EncodeToString(hash[:])
+				if hexFingerprint != expectedFingerprint {
+					return fmt.Errorf("SSH host key fingerprint mismatch for %s: expected %s, got SHA256:%s", 
+						hostname, expectedFingerprint, fingerprint)
+				}
+			}
+			
+			log.Printf("SSH host key fingerprint verified for %s: SHA256:%s", hostname, fingerprint)
+			return nil
+		}, nil
+
+	case "strict":
+		// Strict verification - try known_hosts first, fall back to fingerprint if provided
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			knownHostsFile := filepath.Join(homeDir, ".ssh", "known_hosts")
+			if _, err := os.Stat(knownHostsFile); err == nil {
+				callback, err := knownhosts.New(knownHostsFile)
+				if err == nil {
+					log.Printf("Using system known_hosts file for strict SSH host key verification: %s", knownHostsFile)
+					return callback, nil
+				}
+			}
+		}
+
+		// If known_hosts is not available but fingerprint is provided, use fingerprint verification
+		if c.Source.HostKeyFingerprint != "" {
+			log.Printf("Using fingerprint verification as fallback for strict mode")
+			// Temporarily set verification mode to fingerprint and call the function
+			origVerification := c.Source.HostKeyVerification
+			c.Source.HostKeyVerification = "fingerprint"
+			callback, err := c.createHostKeyCallback()
+			c.Source.HostKeyVerification = origVerification // Restore original value
+			return callback, err
+		}
+
+		return nil, fmt.Errorf("strict host key verification requires either a known_hosts file or host_key_fingerprint to be configured")
+
+	default:
+		return nil, fmt.Errorf("invalid host_key_verification method: %s (must be 'strict', 'known_hosts', 'fingerprint', or 'insecure')", verification)
+	}
+}
+
 // connect establishes connection to log source
 func (c *LogCollector) connect() error {
 	if c.Source.Type == "ssh" {
@@ -368,10 +537,16 @@ func (c *LogCollector) connect() error {
 
 // connectSSH establishes SSH connection
 func (c *LogCollector) connectSSH() error {
+	// Create host key verification callback
+	hostKeyCallback, err := c.createHostKeyCallback()
+	if err != nil {
+		return fmt.Errorf("failed to setup SSH host key verification: %v", err)
+	}
+
 	config := &ssh.ClientConfig{
-		User:    c.Source.Username,
-		Timeout: time.Duration(logCollectorConfig.ConnectTimeout) * time.Second,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Note: In production, use proper host key verification
+		User:            c.Source.Username,
+		Timeout:         time.Duration(logCollectorConfig.ConnectTimeout) * time.Second,
+		HostKeyCallback: hostKeyCallback,
 	}
 
 	// Set up authentication

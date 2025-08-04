@@ -397,6 +397,12 @@ type LogSource struct {
 	Passphrase       string             `json:"passphrase,omitempty"`       // SSH key passphrase
 	Password         string             `json:"password,omitempty"`         // SSH password
 	
+	// SSH Host Key Verification
+	HostKeyVerification string           `json:"host_key_verification,omitempty"` // "strict", "known_hosts", "fingerprint", or "insecure"
+	KnownHostsFile      string           `json:"known_hosts_file,omitempty"`       // Path to known_hosts file
+	HostKeyFingerprint  string           `json:"host_key_fingerprint,omitempty"`  // Expected SSH host key fingerprint (SHA256)
+	HostKeyAlgorithm    string           `json:"host_key_algorithm,omitempty"`    // Expected host key algorithm (ssh-rsa, ssh-ed25519, etc.)
+	
 	// File Configuration
 	FilePath         string             `json:"file_path"`         // Path to log file
 	FollowRotation   bool               `json:"follow_rotation"`   // Handle log rotation

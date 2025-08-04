@@ -259,24 +259,17 @@ func Register(rt Route) error {
 				
 				// ASSUMPTION: Only process our firewall rule keys (format: "rules:client|ip|domain")
 				if strings.HasPrefix(expiredKey, "rules:") {
-					// Remove "rules:" prefix and split on pipe (IPv6-safe)
-					keyContent := strings.TrimPrefix(expiredKey, "rules:")
-					parts := strings.Split(keyContent, "|")
-					if len(parts) == 3 {
-						clientIP := parts[0]
-						resolvedIP := parts[1]
-						domain := parts[2]
-						
-						// QUESTION: Should we validate IPs here or trust Redis key format?
-						// ASSUMPTION: Trust Redis key format since we control key creation
-						
-						log.Printf("Key expired: %s (client=%s, resolved=%s, domain=%s)", expiredKey, clientIP, resolvedIP, domain)
-						
-						// Use enhanced script execution system for expiration
-						executeScript(clientIP, resolvedIP, domain, "0", "EXPIRE", false)
-					} else {
-						log.Printf("WARNING: Malformed expired key format: %s", expiredKey)
+					// Use secure Redis key parsing with validation
+					clientIP, resolvedIP, domain, err := parseRedisKey(expiredKey)
+					if err != nil {
+						log.Printf("WARNING: Invalid expired Redis key %s: %v", expiredKey, err)
+						continue
 					}
+					
+					log.Printf("Key expired: %s (client=%s, resolved=%s, domain=%s)", expiredKey, clientIP, resolvedIP, domain)
+					
+					// Components are already validated by parseRedisKey, safe to execute
+					executeScript(clientIP, resolvedIP, domain, "0", "EXPIRE", false)
 				}
 				// ASSUMPTION: Ignore non-firewall keys (other app keys, etc)
 			}
