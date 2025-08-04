@@ -23,9 +23,10 @@ func inRange(ipLow, ipHigh, ip netip.Addr) bool {
 	return ip.Compare(ipLow) >= 0 && ip.Compare(ipHigh) <= 0
 }
 
-// padTTLForScript pads TTL values less than 60 seconds by adding 60 seconds
+// padTTL pads TTL values less than 60 seconds by adding 60 seconds
 // This prevents firewall rules from expiring prematurely for very low TTL values
-func padTTLForScript(originalTTL uint32) uint32 {
+// Applied to both Redis storage and script execution for consistency
+func padTTL(originalTTL uint32) uint32 {
 	if originalTTL < 60 {
 		return originalTTL + 60
 	}
@@ -475,13 +476,13 @@ func Register(rt Route) error {
 					}
 				}
 				
-				// Create padded TTL for script execution (original TTL + 60 seconds if TTL < 60)
-				scriptTTL := padTTLForScript(rrType.Hdr.Ttl)
-				ttl := strconv.FormatUint(uint64(scriptTTL), 10)
+				// Create padded TTL for both Redis storage and script execution (original TTL + 60 seconds if TTL < 60)
+				paddedTTL := padTTL(rrType.Hdr.Ttl)
+				ttl := strconv.FormatUint(uint64(paddedTTL), 10)
 
 				if os.Getenv("DEBUG") != "" {
-					if scriptTTL != rrType.Hdr.Ttl {
-						log.Printf("A record: %s -> %s (DNS TTL: %d, Script TTL: %s)", domain, resolvedIP, rrType.Hdr.Ttl, ttl)
+					if paddedTTL != rrType.Hdr.Ttl {
+						log.Printf("A record: %s -> %s (DNS TTL: %d, Padded TTL: %s)", domain, resolvedIP, rrType.Hdr.Ttl, ttl)
 					} else {
 						log.Printf("A record: %s -> %s (TTL: %s)", domain, resolvedIP, ttl)
 					}
@@ -549,8 +550,8 @@ func Register(rt Route) error {
 
 				isNewRule := exists == 0
 				
-				// Store in Redis with TTL (minimum 1 second to avoid Redis timeout warnings)
-				ttlDuration := time.Duration(rrType.Hdr.Ttl) * time.Second
+				// Store in Redis with padded TTL (minimum 1 second to avoid Redis timeout warnings)
+				ttlDuration := time.Duration(paddedTTL) * time.Second
 				if ttlDuration < 1*time.Second {
 					ttlDuration = 1 * time.Second
 				}
@@ -559,10 +560,10 @@ func Register(rt Route) error {
 					log.Printf("Error storing rule in Redis: %v", err)
 				} else {
 					if isNewRule {
-						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, TTL=%d seconds)", key, from, resolvedIP, domain, rrType.Hdr.Ttl)
+						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIP, domain, rrType.Hdr.Ttl, paddedTTL)
 					}
 					if os.Getenv("DEBUG") != "" {
-						log.Printf("Stored rule in Redis: %s (TTL: %d seconds)", key, rrType.Hdr.Ttl)
+						log.Printf("Stored rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, paddedTTL)
 					}
 				}
 
@@ -594,13 +595,13 @@ func Register(rt Route) error {
 					}
 				}
 				
-				// Create padded TTL for script execution (original TTL + 60 seconds if TTL < 60)
-				scriptTTL := padTTLForScript(rrType.Hdr.Ttl)
-				ttl := strconv.FormatUint(uint64(scriptTTL), 10)
+				// Create padded TTL for both Redis storage and script execution (original TTL + 60 seconds if TTL < 60)
+				paddedTTL := padTTL(rrType.Hdr.Ttl)
+				ttl := strconv.FormatUint(uint64(paddedTTL), 10)
 
 				if os.Getenv("DEBUG") != "" {
-					if scriptTTL != rrType.Hdr.Ttl {
-						log.Printf("AAAA record: %s -> %s (DNS TTL: %d, Script TTL: %s)", domain, resolvedIPv6, rrType.Hdr.Ttl, ttl)
+					if paddedTTL != rrType.Hdr.Ttl {
+						log.Printf("AAAA record: %s -> %s (DNS TTL: %d, Padded TTL: %s)", domain, resolvedIPv6, rrType.Hdr.Ttl, ttl)
 					} else {
 						log.Printf("AAAA record: %s -> %s (TTL: %s)", domain, resolvedIPv6, ttl)
 					}
@@ -629,8 +630,8 @@ func Register(rt Route) error {
 
 				isNewRule := exists == 0
 				
-				// Store in Redis with TTL (minimum 1 second to avoid Redis timeout warnings)
-				ttlDuration := time.Duration(rrType.Hdr.Ttl) * time.Second
+				// Store in Redis with padded TTL (minimum 1 second to avoid Redis timeout warnings)
+				ttlDuration := time.Duration(paddedTTL) * time.Second
 				if ttlDuration < 1*time.Second {
 					ttlDuration = 1 * time.Second
 				}
@@ -639,10 +640,10 @@ func Register(rt Route) error {
 					log.Printf("Error storing IPv6 rule in Redis: %v", err)
 				} else {
 					if isNewRule {
-						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, TTL=%d seconds)", key, from, resolvedIPv6, domain, rrType.Hdr.Ttl)
+						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIPv6, domain, rrType.Hdr.Ttl, paddedTTL)
 					}
 					if os.Getenv("DEBUG") != "" {
-						log.Printf("Stored IPv6 rule in Redis: %s (TTL: %d seconds)", key, rrType.Hdr.Ttl)
+						log.Printf("Stored IPv6 rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, paddedTTL)
 					}
 				}
 
