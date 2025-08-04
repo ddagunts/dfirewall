@@ -132,6 +132,39 @@ Collect logs from remote servers via SSH:
 - `passphrase` (string): Private key passphrase (if needed)
 - `password` (string): SSH password or fallback password
 
+**SSH Host Key Verification:**
+- `host_key_verification` (string): Verification method - "strict", "known_hosts", "fingerprint", or "insecure"
+- `known_hosts_file` (string): Path to known_hosts file (optional, defaults to ~/.ssh/known_hosts)
+- `host_key_fingerprint` (string): Expected SHA256 fingerprint for fingerprint verification
+- `host_key_algorithm` (string): Expected host key algorithm (future use)
+
+### SSH Host Key Verification Methods
+
+**strict** (default): Most secure option. Uses known_hosts file if available, falls back to fingerprint verification if configured.
+
+**known_hosts**: Uses OpenSSH known_hosts file format. Specify custom path with `known_hosts_file` or uses default `~/.ssh/known_hosts`.
+
+**fingerprint**: Verifies against a specific SHA256 fingerprint. Use `host_key_fingerprint` field with base64-encoded fingerprint.
+
+**insecure**: Disables host key verification. **NOT RECOMMENDED** - only use for testing or isolated environments.
+
+### Getting SSH Host Key Fingerprints
+
+To get the SSH host key fingerprint for a server:
+
+```bash
+# Use the provided utility script
+./scripts/get-ssh-fingerprint.sh server.example.com
+./scripts/get-ssh-fingerprint.sh server.example.com 2222
+
+# Or manually with ssh-keyscan and ssh-keygen
+ssh-keyscan server.example.com | ssh-keygen -lf -
+```
+
+The script will show both the full fingerprint (with SHA256: prefix) and the base64 part needed for dfirewall configuration.
+
+**Security Note**: Always verify fingerprints through a secure out-of-band channel before using in production.
+
 ## Pattern Matching
 
 Each log source can have multiple regex patterns to extract different types of data:

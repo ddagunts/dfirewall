@@ -1975,6 +1975,25 @@ func validateDomainForExecution(domain string) bool {
 		return false
 	}
 	
+	// Special case: allow "log:" prefix for log collection entries
+	if strings.HasPrefix(domain, "log:") {
+		// Validate the part after "log:" as a normal identifier
+		logSource := strings.TrimPrefix(domain, "log:")
+		if len(logSource) == 0 || len(logSource) > 240 { // Leave room for "log:" prefix
+			return false
+		}
+		// Log source names can contain alphanumeric, hyphens, and underscores
+		for _, char := range logSource {
+			if !((char >= 'a' && char <= 'z') || 
+				 (char >= 'A' && char <= 'Z') || 
+				 (char >= '0' && char <= '9') || 
+				 char == '-' || char == '_') {
+				return false
+			}
+		}
+		return true
+	}
+	
 	// Must not contain shell metacharacters
 	// Valid domains should only contain alphanumeric, dots, hyphens, and underscores
 	for _, char := range domain {
@@ -2057,6 +2076,73 @@ func validateInvokeScript(scriptPath string) error {
 	// Check if file is executable
 	if info.Mode().Perm()&0111 == 0 {
 		return fmt.Errorf("script is not executable")
+	}
+	
+	return nil
+}
+
+// Redis Key Security Functions
+
+// parseRedisKey safely parses a Redis key and validates components before use
+// Returns parsed components and error if invalid
+func parseRedisKey(key string) (clientIP, resolvedIP, domain string, err error) {
+	// Validate key format
+	if !strings.HasPrefix(key, "rules:") {
+		return "", "", "", fmt.Errorf("invalid key format: must start with 'rules:'")
+	}
+	
+	// Remove prefix and split
+	keyContent := strings.TrimPrefix(key, "rules:")
+	parts := strings.Split(keyContent, "|")
+	
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("invalid key format: expected 3 parts, got %d", len(parts))
+	}
+	
+	clientIP = parts[0]
+	resolvedIP = parts[1] 
+	domain = parts[2]
+	
+	// Validate each component before returning
+	if err := validateForShellExecution(clientIP, "ip"); err != nil {
+		return "", "", "", fmt.Errorf("invalid client IP in Redis key: %v", err)
+	}
+	
+	if err := validateForShellExecution(resolvedIP, "ip"); err != nil {
+		return "", "", "", fmt.Errorf("invalid resolved IP in Redis key: %v", err)
+	}
+	
+	if err := validateForShellExecution(domain, "domain"); err != nil {
+		return "", "", "", fmt.Errorf("invalid domain in Redis key: %v", err)
+	}
+	
+	return clientIP, resolvedIP, domain, nil
+}
+
+// validateRedisKeyComponents validates Redis key components for API exposure
+// This is a more lenient validation for display purposes (not script execution)
+func validateRedisKeyComponents(clientIP, resolvedIP, domain string) error {
+	// Basic format checks - allow some special cases for log entries
+	if clientIP == "" || resolvedIP == "" || domain == "" {
+		return fmt.Errorf("Redis key components cannot be empty")
+	}
+	
+	// Check for obvious injection attempts
+	dangerousChars := []string{";", "&", "|", "`", "$", "(", ")", "<", ">", "\"", "'", "\\"}
+	components := []string{clientIP, resolvedIP, domain}
+	names := []string{"clientIP", "resolvedIP", "domain"}
+	
+	for i, component := range components {
+		for _, char := range dangerousChars {
+			if strings.Contains(component, char) {
+				return fmt.Errorf("potentially malicious character '%s' found in %s: %s", char, names[i], component)
+			}
+		}
+		
+		// Length check to prevent buffer overflow attempts
+		if len(component) > 253 {
+			return fmt.Errorf("%s too long: %d characters (max 253)", names[i], len(component))
+		}
 	}
 	
 	return nil

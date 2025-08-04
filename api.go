@@ -38,21 +38,18 @@ func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 	var rules []FirewallRule
 	
 	for _, key := range keys {
-		// Parse key format: "rules:client|ip|domain" (using pipe to avoid IPv6 colon conflicts)
-		if !strings.HasPrefix(key, "rules:") {
-			continue // Skip non-rule keys
+		// Use secure Redis key parsing with validation
+		clientIP, resolvedIP, domain, err := parseRedisKey(key)
+		if err != nil {
+			log.Printf("WARNING: Skipping invalid Redis key %s: %v", key, err)
+			continue
 		}
 		
-		// Remove "rules:" prefix and split on pipe
-		keyContent := strings.TrimPrefix(key, "rules:")
-		parts := strings.Split(keyContent, "|")
-		if len(parts) != 3 {
-			continue // Skip malformed keys
+		// Additional validation for API display
+		if err := validateRedisKeyComponents(clientIP, resolvedIP, domain); err != nil {
+			log.Printf("WARNING: Skipping potentially malicious Redis key %s: %v", key, err)
+			continue
 		}
-		
-		clientIP := parts[0]
-		resolvedIP := parts[1]
-		domain := parts[2]
 		
 		// Get TTL
 		ttl, err := redisClient.TTL(ctx, key).Result()
@@ -112,21 +109,18 @@ func handleAPIStats(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 	resolvedIPs := make(map[string]bool)
 	
 	for _, key := range keys {
-		// Parse key format: "rules:client|ip|domain" (using pipe to avoid IPv6 colon conflicts)
-		if !strings.HasPrefix(key, "rules:") {
-			continue // Skip non-rule keys
+		// Use secure Redis key parsing with validation
+		clientIP, resolvedIP, domain, err := parseRedisKey(key)
+		if err != nil {
+			log.Printf("WARNING: Skipping invalid Redis key in stats %s: %v", key, err)
+			continue
 		}
 		
-		// Remove "rules:" prefix and split on pipe
-		keyContent := strings.TrimPrefix(key, "rules:")
-		parts := strings.Split(keyContent, "|")
-		if len(parts) != 3 {
-			continue // Skip malformed keys
+		// Additional validation for API display
+		if err := validateRedisKeyComponents(clientIP, resolvedIP, domain); err != nil {
+			log.Printf("WARNING: Skipping potentially malicious Redis key in stats %s: %v", key, err)
+			continue
 		}
-		
-		clientIP := parts[0]
-		resolvedIP := parts[1]
-		domain := parts[2]
 		
 		clientIPs[clientIP] = true
 		resolvedIPs[resolvedIP] = true
