@@ -861,7 +861,7 @@ func (c *LogCollector) processExtractedData(entry *LogEntry, redisClient *redis.
 			continue
 		}
 
-		log.Printf("Key added: %s (client=%s, resolved=%s, domain=log:%s, TTL=%d seconds)", key, clientIP, ip, entry.Source, ttl)
+		log.Printf("Key added: %s (log:%s, TTL: %ds)", key, entry.Source, ttl)
 		if os.Getenv("DEBUG") != "" {
 			log.Printf("Stored log-extracted IP rule: %s (TTL: %d seconds)", key, ttl)
 		}
@@ -884,7 +884,7 @@ func (c *LogCollector) processExtractedData(entry *LogEntry, redisClient *redis.
 			continue
 		}
 
-		log.Printf("Key added: %s (client=%s, resolved=0.0.0.0, domain=%s, TTL=%d seconds)", key, clientIP, domain, ttl)
+		log.Printf("Key added: %s (log:%s, TTL: %ds)", key, entry.Source, ttl)
 		if os.Getenv("DEBUG") != "" {
 			log.Printf("Stored log-extracted domain rule: %s (TTL: %d seconds)", key, ttl)
 		}

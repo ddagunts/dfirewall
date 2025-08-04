@@ -358,7 +358,7 @@ func Register(rt Route) error {
 						continue
 					}
 					
-					log.Printf("Key expired: %s (client=%s, resolved=%s, domain=%s)", expiredKey, clientIP, resolvedIP, domain)
+					log.Printf("Key expired: %s", expiredKey)
 					
 					// Components are already validated by parseRedisKey, safe to execute
 					executeScript(clientIP, resolvedIP, domain, "0", "EXPIRE", false)
@@ -651,7 +651,7 @@ func Register(rt Route) error {
 					log.Printf("Error storing rule in Redis: %v", err)
 				} else {
 					if isNewRule {
-						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIP, domain, rrType.Hdr.Ttl, ttlWithGrace)
+						log.Printf("Key added: %s (TTL: %ds)", key, ttlWithGrace)
 					}
 					if os.Getenv("DEBUG") != "" {
 						log.Printf("Stored rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, ttlWithGrace)
@@ -727,7 +727,7 @@ func Register(rt Route) error {
 					log.Printf("Error storing IPv6 rule in Redis: %v", err)
 				} else {
 					if isNewRule {
-						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIPv6, domain, rrType.Hdr.Ttl, ttlWithGrace)
+						log.Printf("Key added: %s (TTL: %ds)", key, ttlWithGrace)
 					}
 					if os.Getenv("DEBUG") != "" {
 						log.Printf("Stored IPv6 rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, ttlWithGrace)
