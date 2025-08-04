@@ -468,6 +468,38 @@ type LogEntry struct {
 	ProcessedAt      time.Time          `json:"processed_at"`      // When dfirewall processed this entry
 }
 
+// UpstreamClientConfig represents per-client upstream resolver configuration
+type UpstreamClientConfig struct {
+	// Pattern for matching client IPs (supports CIDR notation, single IPs, or regex patterns)
+	ClientPattern string `json:"client_pattern"`
+	// Upstream DNS resolver for matching clients (e.g., "1.1.1.1:53")
+	Upstream string `json:"upstream"`
+	// Description for documentation purposes
+	Description string `json:"description,omitempty"`
+}
+
+// UpstreamZoneConfig represents per-zone upstream resolver configuration
+type UpstreamZoneConfig struct {
+	// Zone/domain pattern to match (supports exact domains, wildcards like *.example.com, or regex)
+	ZonePattern string `json:"zone_pattern"`
+	// Upstream DNS resolver for matching zones (e.g., "8.8.8.8:53")
+	Upstream string `json:"upstream"`
+	// Description for documentation purposes
+	Description string `json:"description,omitempty"`
+}
+
+// UpstreamConfig represents the complete upstream resolver configuration
+type UpstreamConfig struct {
+	// Default upstream resolver (fallback when no specific rules match)
+	DefaultUpstream string `json:"default_upstream"`
+	// Per-client upstream resolver configurations
+	ClientConfigs []UpstreamClientConfig `json:"client_configs,omitempty"`
+	// Per-zone upstream resolver configurations
+	ZoneConfigs []UpstreamZoneConfig `json:"zone_configs,omitempty"`
+	// Priority order: client-specific rules take precedence over zone-specific rules
+	// which take precedence over default upstream
+}
+
 // ConfigStatus represents configuration status information
 type ConfigStatus struct {
 	ScriptConfig       *ScriptConfiguration `json:"script_config,omitempty"`
@@ -477,6 +509,7 @@ type ConfigStatus struct {
 	CustomScriptConfig *CustomScriptConfig  `json:"custom_script_config,omitempty"`
 	WebUIAuthConfig    *WebUIAuthConfig     `json:"webui_auth_config,omitempty"`
 	LogCollectorConfig *LogCollectorConfig  `json:"log_collector_config,omitempty"`
+	UpstreamConfig     *UpstreamConfig      `json:"upstream_config,omitempty"`
 	Environment        map[string]string    `json:"environment"`
 	LoadedAt           time.Time            `json:"loaded_at"`
 }

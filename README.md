@@ -28,8 +28,44 @@ REDIS=redis://127.0.0.1:6379 # Redis connection string
 # Optional
 PORT=53                      # listening port
 WEB_UI_PORT=8080            # web interface port
+UPSTREAM_CONFIG=config/upstream-config.json  # per-client/zone upstream routing
+TTL_GRACE_PERIOD_SECONDS=90 # grace period added to all DNS TTLs (default: 90)
 DEBUG=true                  # enable verbose logging
 ```
+
+## Advanced Upstream DNS Routing
+
+dfirewall supports sophisticated upstream DNS resolver routing based on client IP addresses and domain patterns. This enables network segmentation, geographic routing, split-horizon DNS, and specialized DNS services per client or domain.
+
+### Key Features
+- **Per-client routing**: Route DNS queries from specific clients/networks to different upstream resolvers
+- **Per-zone routing**: Route specific domains to different upstream resolvers  
+- **Priority-based**: Client rules take precedence over zone rules
+- **Flexible patterns**: Support for exact matches, CIDR notation, wildcards, and regex patterns
+- **Fallback support**: Configurable default upstream when no rules match
+
+### Quick Example
+```json
+{
+  "default_upstream": "1.1.1.1:53",
+  "client_configs": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "upstream": "8.8.8.8:53",
+      "description": "Internal network uses Google DNS"
+    }
+  ],
+  "zone_configs": [
+    {
+      "zone_pattern": "*.company.com",
+      "upstream": "10.0.1.10:53", 
+      "description": "Company domains use internal DNS"
+    }
+  ]
+}
+```
+
+**📖 For comprehensive upstream routing configuration, see:** [docs/configuration.md](docs/configuration.md#upstream-configuration-upstream_config)
 # Setup on Linux
 
 dfirewall can be deployed as a network router with firewall capabilities.  The easiest platform to do this on is Linux thanks to ipset.
@@ -50,8 +86,10 @@ EXPIRE_SCRIPT=./scripts/expire_generic.sh
 
 When enabled, dfirewall will:
 1. Monitor Redis keyspace notifications for expired keys
-2. Execute your expire script when DNS TTLs expire
+2. Execute your expire script when DNS TTLs + grace period expire
 3. Pass the same environment variables as INVOKE_SCRIPT, plus `ACTION=EXPIRE`
+
+**TTL Grace Period**: All DNS TTLs are extended with a configurable grace period (default 90 seconds) before firewall rules are removed. This prevents premature rule expiration and provides a buffer for DNS refresh cycles. Configure via `TTL_GRACE_PERIOD_SECONDS` environment variable.
 
 **Redis Configuration Note**: Redis keyspace notifications must be enabled. dfirewall attempts to enable this automatically, but if it fails, run:
 ```bash

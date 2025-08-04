@@ -18,19 +18,76 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Global configuration for TTL grace period
+var ttlGracePeriodSeconds uint32 = 90 // Default grace period of 90 seconds after DNS TTL expiration
+
 // inRange checks if IP is within the specified range
 func inRange(ipLow, ipHigh, ip netip.Addr) bool {
 	return ip.Compare(ipLow) >= 0 && ip.Compare(ipHigh) <= 0
 }
 
-// padTTL pads TTL values less than 60 seconds by adding 60 seconds
-// This prevents firewall rules from expiring prematurely for very low TTL values
+// addGracePeriod adds a configurable grace period to ALL DNS TTLs
+// This provides a buffer time after DNS TTL expiration before firewall rules are removed
 // Applied to both Redis storage and script execution for consistency
-func padTTL(originalTTL uint32) uint32 {
-	if originalTTL < 60 {
-		return originalTTL + 60
+func addGracePeriod(originalTTL uint32) uint32 {
+	return originalTTL + ttlGracePeriodSeconds
+}
+
+// selectUpstreamResolver determines which upstream resolver to use based on client IP and domain
+// Priority: client-specific rules > zone-specific rules > default upstream
+func selectUpstreamResolver(clientIP, domain, defaultUpstream string, upstreamConfig *UpstreamConfig) string {
+	if upstreamConfig == nil {
+		return defaultUpstream
 	}
-	return originalTTL
+
+	// Check client-specific rules first (highest priority)
+	for _, clientConfig := range upstreamConfig.ClientConfigs {
+		if matchesClientPattern(clientIP, clientConfig.ClientPattern) {
+			return clientConfig.Upstream
+		}
+	}
+
+	// Check zone-specific rules second
+	for _, zoneConfig := range upstreamConfig.ZoneConfigs {
+		if matchesZonePattern(domain, zoneConfig.ZonePattern) {
+			return zoneConfig.Upstream
+		}
+	}
+
+	// Use configured default upstream if available, otherwise fall back to environment variable
+	if upstreamConfig.DefaultUpstream != "" {
+		return upstreamConfig.DefaultUpstream
+	}
+
+	return defaultUpstream
+}
+
+// matchesZonePattern checks if a domain matches a zone pattern
+// Supports exact matches, wildcards (*.example.com), and regex patterns
+func matchesZonePattern(domain, pattern string) bool {
+	if pattern == "" {
+		return false
+	}
+
+	// Exact match
+	if domain == pattern {
+		return true
+	}
+
+	// Wildcard pattern (*.example.com)
+	if strings.HasPrefix(pattern, "*.") {
+		suffix := pattern[2:] // Remove "*."
+		return strings.HasSuffix(domain, "."+suffix) || domain == suffix
+	}
+
+	// Try regex pattern (if it contains regex metacharacters)
+	if strings.ContainsAny(pattern, "^$()[]{}|+?\\") {
+		if matched, err := regexp.MatchString(pattern, domain); err == nil {
+			return matched
+		}
+	}
+
+	return false
 }
 
 // Register sets up the DNS proxy and starts handling DNS requests
@@ -48,6 +105,16 @@ func Register(rt Route) error {
 
 	// HANDLE_ALL_IPS: when set, process all A records instead of just the first one
 	handleAllIPs := os.Getenv("HANDLE_ALL_IPS")
+
+	// TTL_GRACE_PERIOD_SECONDS: configurable grace period added to all DNS TTLs (default: 90 seconds)
+	if gracePeriodEnv := os.Getenv("TTL_GRACE_PERIOD_SECONDS"); gracePeriodEnv != "" {
+		if parsed, err := strconv.ParseUint(gracePeriodEnv, 10, 32); err == nil {
+			ttlGracePeriodSeconds = uint32(parsed)
+			log.Printf("TTL grace period configured to %d seconds", ttlGracePeriodSeconds)
+		} else {
+			log.Printf("Invalid TTL_GRACE_PERIOD_SECONDS value '%s', using default %d seconds", gracePeriodEnv, ttlGracePeriodSeconds)
+		}
+	}
 
 	redisEnv := os.Getenv("REDIS")
 	if redisEnv == "" {
@@ -191,6 +258,21 @@ func Register(rt Route) error {
 		log.Printf("LOG_COLLECTOR_CONFIG env var not set, log collection disabled")
 	}
 
+	// UPSTREAM_CONFIG: JSON configuration file for per-client and per-zone upstream resolvers
+	var upstreamConfig *UpstreamConfig
+	upstreamConfigPath := os.Getenv("UPSTREAM_CONFIG")
+	if upstreamConfigPath != "" {
+		config, err := loadUpstreamConfiguration(upstreamConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load upstream configuration: %v", err)
+		}
+		upstreamConfig = config
+		log.Printf("UPSTREAM_CONFIG loaded from %s: default=%s, clients=%d, zones=%d", 
+			upstreamConfigPath, config.DefaultUpstream, len(config.ClientConfigs), len(config.ZoneConfigs))
+	} else {
+		log.Printf("UPSTREAM_CONFIG env var not set, using single upstream resolver from UPSTREAM env var")
+	}
+
 	var redisClient *redis.Client
 	var err error
 	redisClient, err = createRedisClient(redisEnv)
@@ -276,7 +358,7 @@ func Register(rt Route) error {
 						continue
 					}
 					
-					log.Printf("Key expired: %s (client=%s, resolved=%s, domain=%s)", expiredKey, clientIP, resolvedIP, domain)
+					log.Printf("Key expired: %s", expiredKey)
 					
 					// Components are already validated by parseRedisKey, safe to execute
 					executeScript(clientIP, resolvedIP, domain, "0", "EXPIRE", false)
@@ -453,8 +535,21 @@ func Register(rt Route) error {
 			}
 		}
 
-		// Query upstream DNS
-		resp, _, err := c.Exchange(r, upstream)
+		// Determine which upstream resolver to use based on client IP and requested domain
+		requestedDomain := ""
+		if len(r.Question) > 0 {
+			requestedDomain = strings.TrimSuffix(r.Question[0].Name, ".")
+		}
+		
+		selectedUpstream := selectUpstreamResolver(from, requestedDomain, upstream, upstreamConfig)
+		
+		if os.Getenv("DEBUG") != "" && selectedUpstream != upstream {
+			log.Printf("Selected upstream %s for client %s querying %s (default: %s)", 
+				selectedUpstream, from, requestedDomain, upstream)
+		}
+
+		// Query selected upstream DNS
+		resp, _, err := c.Exchange(r, selectedUpstream)
 		if err != nil {
 			log.Printf("Error querying upstream DNS: %v", err)
 			dns.HandleFailed(w, r)
@@ -476,16 +571,12 @@ func Register(rt Route) error {
 					}
 				}
 				
-				// Create padded TTL for both Redis storage and script execution (original TTL + 60 seconds if TTL < 60)
-				paddedTTL := padTTL(rrType.Hdr.Ttl)
-				ttl := strconv.FormatUint(uint64(paddedTTL), 10)
+				// Add grace period to TTL for both Redis storage and script execution
+				ttlWithGrace := addGracePeriod(rrType.Hdr.Ttl)
+				ttl := strconv.FormatUint(uint64(ttlWithGrace), 10)
 
 				if os.Getenv("DEBUG") != "" {
-					if paddedTTL != rrType.Hdr.Ttl {
-						log.Printf("A record: %s -> %s (DNS TTL: %d, Padded TTL: %s)", domain, resolvedIP, rrType.Hdr.Ttl, ttl)
-					} else {
-						log.Printf("A record: %s -> %s (TTL: %s)", domain, resolvedIP, ttl)
-					}
+					log.Printf("A record: %s -> %s (DNS TTL: %d, Redis TTL with grace: %s)", domain, resolvedIP, rrType.Hdr.Ttl, ttl)
 				}
 
 				// FEATURE: IP blacklist checking after DNS resolution
@@ -550,8 +641,8 @@ func Register(rt Route) error {
 
 				isNewRule := exists == 0
 				
-				// Store in Redis with padded TTL (minimum 1 second to avoid Redis timeout warnings)
-				ttlDuration := time.Duration(paddedTTL) * time.Second
+				// Store in Redis with TTL + grace period (minimum 1 second to avoid Redis timeout warnings)
+				ttlDuration := time.Duration(ttlWithGrace) * time.Second
 				if ttlDuration < 1*time.Second {
 					ttlDuration = 1 * time.Second
 				}
@@ -560,10 +651,10 @@ func Register(rt Route) error {
 					log.Printf("Error storing rule in Redis: %v", err)
 				} else {
 					if isNewRule {
-						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIP, domain, rrType.Hdr.Ttl, paddedTTL)
+						log.Printf("Key added: %s (TTL: %ds)", key, ttlWithGrace)
 					}
 					if os.Getenv("DEBUG") != "" {
-						log.Printf("Stored rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, paddedTTL)
+						log.Printf("Stored rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, ttlWithGrace)
 					}
 				}
 
@@ -595,16 +686,12 @@ func Register(rt Route) error {
 					}
 				}
 				
-				// Create padded TTL for both Redis storage and script execution (original TTL + 60 seconds if TTL < 60)
-				paddedTTL := padTTL(rrType.Hdr.Ttl)
-				ttl := strconv.FormatUint(uint64(paddedTTL), 10)
+				// Add grace period to TTL for both Redis storage and script execution
+				ttlWithGrace := addGracePeriod(rrType.Hdr.Ttl)
+				ttl := strconv.FormatUint(uint64(ttlWithGrace), 10)
 
 				if os.Getenv("DEBUG") != "" {
-					if paddedTTL != rrType.Hdr.Ttl {
-						log.Printf("AAAA record: %s -> %s (DNS TTL: %d, Padded TTL: %s)", domain, resolvedIPv6, rrType.Hdr.Ttl, ttl)
-					} else {
-						log.Printf("AAAA record: %s -> %s (TTL: %s)", domain, resolvedIPv6, ttl)
-					}
+					log.Printf("AAAA record: %s -> %s (DNS TTL: %d, Redis TTL with grace: %s)", domain, resolvedIPv6, rrType.Hdr.Ttl, ttl)
 				}
 
 				// Similar processing for IPv6
@@ -630,8 +717,8 @@ func Register(rt Route) error {
 
 				isNewRule := exists == 0
 				
-				// Store in Redis with padded TTL (minimum 1 second to avoid Redis timeout warnings)
-				ttlDuration := time.Duration(paddedTTL) * time.Second
+				// Store in Redis with TTL + grace period (minimum 1 second to avoid Redis timeout warnings)
+				ttlDuration := time.Duration(ttlWithGrace) * time.Second
 				if ttlDuration < 1*time.Second {
 					ttlDuration = 1 * time.Second
 				}
@@ -640,10 +727,10 @@ func Register(rt Route) error {
 					log.Printf("Error storing IPv6 rule in Redis: %v", err)
 				} else {
 					if isNewRule {
-						log.Printf("Key added: %s (client=%s, resolved=%s, domain=%s, DNS TTL=%d, Redis TTL=%d seconds)", key, from, resolvedIPv6, domain, rrType.Hdr.Ttl, paddedTTL)
+						log.Printf("Key added: %s (TTL: %ds)", key, ttlWithGrace)
 					}
 					if os.Getenv("DEBUG") != "" {
-						log.Printf("Stored IPv6 rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, paddedTTL)
+						log.Printf("Stored IPv6 rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, ttlWithGrace)
 					}
 				}
 
@@ -870,4 +957,44 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 			log.Printf("Script output: %s", string(output))
 		}
 	}()
+}
+
+// loadUpstreamConfiguration loads upstream resolver configuration from JSON file
+func loadUpstreamConfiguration(configPath string) (*UpstreamConfig, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read upstream config file: %v", err)
+	}
+	
+	var config UpstreamConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse upstream JSON config: %v", err)
+	}
+	
+	// Validate default upstream
+	if config.DefaultUpstream == "" {
+		return nil, fmt.Errorf("default_upstream cannot be empty")
+	}
+	
+	// Validate client configurations
+	for i, clientConfig := range config.ClientConfigs {
+		if clientConfig.ClientPattern == "" {
+			return nil, fmt.Errorf("client_configs[%d]: client_pattern cannot be empty", i)
+		}
+		if clientConfig.Upstream == "" {
+			return nil, fmt.Errorf("client_configs[%d]: upstream cannot be empty", i)
+		}
+	}
+	
+	// Validate zone configurations
+	for i, zoneConfig := range config.ZoneConfigs {
+		if zoneConfig.ZonePattern == "" {
+			return nil, fmt.Errorf("zone_configs[%d]: zone_pattern cannot be empty", i)
+		}
+		if zoneConfig.Upstream == "" {
+			return nil, fmt.Errorf("zone_configs[%d]: upstream cannot be empty", i)
+		}
+	}
+	
+	return &config, nil
 }

@@ -596,49 +596,194 @@ echo "Script completed successfully"
 	}
 }
 
-func TestPadTTLForScript(t *testing.T) {
+func TestAddGracePeriod(t *testing.T) {
 	tests := []struct {
 		name        string
 		originalTTL uint32
 		expectedTTL uint32
 	}{
 		{
-			name:        "TTL less than 60 seconds should be padded",
+			name:        "Low TTL gets grace period added",
 			originalTTL: 30,
-			expectedTTL: 90, // 30 + 60
+			expectedTTL: 120, // 30 + 90 (default grace period)
 		},
 		{
-			name:        "TTL of exactly 60 seconds should not be padded",
+			name:        "Medium TTL gets grace period added",
 			originalTTL: 60,
-			expectedTTL: 60,
+			expectedTTL: 150, // 60 + 90
 		},
 		{
-			name:        "TTL greater than 60 seconds should not be padded",
+			name:        "High TTL gets grace period added",
 			originalTTL: 300,
-			expectedTTL: 300,
+			expectedTTL: 390, // 300 + 90
 		},
 		{
-			name:        "Very low TTL of 1 second should be padded",
+			name:        "Very low TTL gets grace period added",
 			originalTTL: 1,
-			expectedTTL: 61, // 1 + 60
+			expectedTTL: 91, // 1 + 90
 		},
 		{
-			name:        "TTL of 0 should be padded",
+			name:        "Zero TTL gets grace period added",
 			originalTTL: 0,
-			expectedTTL: 60, // 0 + 60
+			expectedTTL: 90, // 0 + 90
 		},
 		{
-			name:        "Large TTL should remain unchanged",
+			name:        "Large TTL gets grace period added",
 			originalTTL: 3600,
-			expectedTTL: 3600,
+			expectedTTL: 3690, // 3600 + 90
 		},
 	}
 	
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := padTTL(tt.originalTTL)
+			result := addGracePeriod(tt.originalTTL)
 			if result != tt.expectedTTL {
-				t.Errorf("padTTL(%d) = %d, expected %d", tt.originalTTL, result, tt.expectedTTL)
+				t.Errorf("addGracePeriod(%d) = %d, expected %d", tt.originalTTL, result, tt.expectedTTL)
+			}
+		})
+	}
+}
+
+func TestSelectUpstreamResolver(t *testing.T) {
+	tests := []struct {
+		name            string
+		clientIP        string
+		domain          string
+		defaultUpstream string
+		upstreamConfig  *UpstreamConfig
+		expectedResult  string
+	}{
+		{
+			name:            "No configuration - use default",
+			clientIP:        "192.168.1.100",
+			domain:          "example.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig:  nil,
+			expectedResult:  "1.1.1.1:53",
+		},
+		{
+			name:            "Client-specific rule matches",
+			clientIP:        "192.168.1.100",
+			domain:          "example.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig: &UpstreamConfig{
+				DefaultUpstream: "8.8.8.8:53",
+				ClientConfigs: []UpstreamClientConfig{
+					{ClientPattern: "192.168.1.0/24", Upstream: "9.9.9.9:53"},
+				},
+			},
+			expectedResult: "9.9.9.9:53",
+		},
+		{
+			name:            "Zone-specific rule matches",
+			clientIP:        "10.0.0.100",
+			domain:          "internal.company.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig: &UpstreamConfig{
+				DefaultUpstream: "8.8.8.8:53",
+				ZoneConfigs: []UpstreamZoneConfig{
+					{ZonePattern: "*.company.com", Upstream: "10.0.1.10:53"},
+				},
+			},
+			expectedResult: "10.0.1.10:53",
+		},
+		{
+			name:            "Client rule takes precedence over zone rule",
+			clientIP:        "192.168.1.100",
+			domain:          "internal.company.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig: &UpstreamConfig{
+				DefaultUpstream: "8.8.8.8:53",
+				ClientConfigs: []UpstreamClientConfig{
+					{ClientPattern: "192.168.1.100", Upstream: "9.9.9.9:53"},
+				},
+				ZoneConfigs: []UpstreamZoneConfig{
+					{ZonePattern: "*.company.com", Upstream: "10.0.1.10:53"},
+				},
+			},
+			expectedResult: "9.9.9.9:53",
+		},
+		{
+			name:            "Use configured default when no rules match",
+			clientIP:        "10.0.0.100",
+			domain:          "example.com",
+			defaultUpstream: "1.1.1.1:53",
+			upstreamConfig: &UpstreamConfig{
+				DefaultUpstream: "8.8.8.8:53",
+				ClientConfigs: []UpstreamClientConfig{
+					{ClientPattern: "192.168.1.0/24", Upstream: "9.9.9.9:53"},
+				},
+			},
+			expectedResult: "8.8.8.8:53",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := selectUpstreamResolver(tt.clientIP, tt.domain, tt.defaultUpstream, tt.upstreamConfig)
+			if result != tt.expectedResult {
+				t.Errorf("selectUpstreamResolver() = %v, expected %v", result, tt.expectedResult)
+			}
+		})
+	}
+}
+
+func TestMatchesZonePattern(t *testing.T) {
+	tests := []struct {
+		name     string
+		domain   string
+		pattern  string
+		expected bool
+	}{
+		{
+			name:     "Exact match",
+			domain:   "example.com",
+			pattern:  "example.com",
+			expected: true,
+		},
+		{
+			name:     "Wildcard match - subdomain",
+			domain:   "sub.example.com",
+			pattern:  "*.example.com",
+			expected: true,
+		},
+		{
+			name:     "Wildcard match - exact domain",
+			domain:   "example.com",
+			pattern:  "*.example.com",
+			expected: true,
+		},
+		{
+			name:     "Wildcard no match",
+			domain:   "different.com",
+			pattern:  "*.example.com",
+			expected: false,
+		},
+		{
+			name:     "Regex match",
+			domain:   "test.local",
+			pattern:  "^.*\\.local$",
+			expected: true,
+		},
+		{
+			name:     "Regex no match",
+			domain:   "test.com",
+			pattern:  "^.*\\.local$",
+			expected: false,
+		},
+		{
+			name:     "Empty pattern",
+			domain:   "example.com",
+			pattern:  "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesZonePattern(tt.domain, tt.pattern)
+			if result != tt.expected {
+				t.Errorf("matchesZonePattern(%q, %q) = %v, expected %v", tt.domain, tt.pattern, result, tt.expected)
 			}
 		})
 	}

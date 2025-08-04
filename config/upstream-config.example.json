@@ -1,0 +1,37 @@
+{
+  "default_upstream": "1.1.1.1:53",
+  "client_configs": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "upstream": "8.8.8.8:53",
+      "description": "Internal network uses Google DNS"
+    },
+    {
+      "client_pattern": "10.0.100.50",
+      "upstream": "9.9.9.9:53",
+      "description": "Specific client uses Quad9 DNS"
+    },
+    {
+      "client_pattern": "^172\\.16\\..*",
+      "upstream": "208.67.222.222:53",
+      "description": "Docker network uses OpenDNS (regex pattern)"
+    }
+  ],
+  "zone_configs": [
+    {
+      "zone_pattern": "*.internal.company.com",
+      "upstream": "10.0.1.10:53",
+      "description": "Internal company domains go to internal DNS"
+    },
+    {
+      "zone_pattern": "example.com",
+      "upstream": "8.8.4.4:53",
+      "description": "Specific domain routing"
+    },
+    {
+      "zone_pattern": "^.*\\.local$",
+      "upstream": "127.0.0.1:5353",
+      "description": ".local domains go to mDNS (regex pattern)"
+    }
+  ]
+}

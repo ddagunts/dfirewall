@@ -20,6 +20,14 @@ ENABLE_EDNS=true              # enable EDNS Client Subnet with requesting client
 HANDLE_ALL_IPS=true           # process all A records in DNS response instead of just the first one
 ```
 
+### Advanced Upstream Configuration
+```bash
+UPSTREAM_CONFIG=              # path to JSON configuration file for per-client/zone upstream routing
+TTL_GRACE_PERIOD_SECONDS=90   # grace period added to all DNS TTLs in seconds (default: 90)
+```
+
+**📖 For detailed upstream routing configuration, see:** [Advanced Upstream Configuration](#upstream-configuration-upstream_config)
+
 ### Redis Security Configuration
 ```bash
 REDIS_PASSWORD=               # Redis authentication password (overrides URL password)
@@ -179,6 +187,191 @@ Web UI authentication configuration:
 }
 ```
 
+### Upstream Configuration (`UPSTREAM_CONFIG`)
+Advanced upstream DNS resolver routing configuration allows you to route DNS queries from different clients or for different domains to different upstream resolvers. This enables sophisticated DNS routing policies for network segmentation, geographic routing, or specialized DNS services.
+
+#### Configuration Structure
+```json
+{
+  "default_upstream": "1.1.1.1:53",
+  "client_configs": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "upstream": "8.8.8.8:53",
+      "description": "Internal network uses Google DNS"
+    },
+    {
+      "client_pattern": "10.0.100.50",
+      "upstream": "9.9.9.9:53",
+      "description": "Specific client uses Quad9 DNS"
+    },
+    {
+      "client_pattern": "^172\\.16\\..*",
+      "upstream": "208.67.222.222:53",
+      "description": "Docker network uses OpenDNS (regex pattern)"
+    }
+  ],
+  "zone_configs": [
+    {
+      "zone_pattern": "*.internal.company.com",
+      "upstream": "10.0.1.10:53",
+      "description": "Internal company domains go to internal DNS"
+    },
+    {
+      "zone_pattern": "example.com",
+      "upstream": "8.8.4.4:53",
+      "description": "Specific domain routing"
+    },
+    {
+      "zone_pattern": "^.*\\.local$",
+      "upstream": "127.0.0.1:5353",
+      "description": ".local domains go to mDNS (regex pattern)"
+    }
+  ]
+}
+```
+
+#### Configuration Fields
+
+**Top Level:**
+- `default_upstream`: Default upstream resolver when no specific rules match
+- `client_configs`: Array of per-client routing rules (highest priority)
+- `zone_configs`: Array of per-zone/domain routing rules (medium priority)
+
+**Client Configuration:**
+- `client_pattern`: Pattern to match client IPs
+  - Exact IP: `"192.168.1.100"`
+  - CIDR notation: `"192.168.1.0/24"`
+  - Regex pattern: `"^10\\.0\\..*"` (escaped for JSON)
+- `upstream`: Upstream DNS resolver for matching clients
+- `description`: Optional description for documentation
+
+**Zone Configuration:**
+- `zone_pattern`: Pattern to match domains/zones
+  - Exact domain: `"example.com"`
+  - Wildcard: `"*.example.com"` (matches subdomains and the domain itself)
+  - Regex pattern: `"^.*\\.local$"` (escaped for JSON)
+- `upstream`: Upstream DNS resolver for matching zones
+- `description`: Optional description for documentation
+
+#### Routing Priority
+Rules are evaluated in the following priority order:
+1. **Client-specific rules** (highest priority) - matches client IP patterns
+2. **Zone-specific rules** (medium priority) - matches domain patterns
+3. **Default upstream** (lowest priority) - fallback when no rules match
+
+#### Use Cases
+
+**Network Segmentation:**
+```json
+{
+  "default_upstream": "1.1.1.1:53",
+  "client_configs": [
+    {
+      "client_pattern": "192.168.100.0/24",
+      "upstream": "10.0.1.53:53",
+      "description": "Management network uses internal DNS"
+    },
+    {
+      "client_pattern": "192.168.200.0/24", 
+      "upstream": "8.8.8.8:53",
+      "description": "Guest network uses Google DNS"
+    }
+  ]
+}
+```
+
+**Geographic DNS Routing:**
+```json
+{
+  "default_upstream": "1.1.1.1:53",
+  "zone_configs": [
+    {
+      "zone_pattern": "*.us.example.com",
+      "upstream": "8.8.8.8:53",
+      "description": "US domains via Google DNS"
+    },
+    {
+      "zone_pattern": "*.eu.example.com",
+      "upstream": "1.1.1.1:53",
+      "description": "EU domains via Cloudflare DNS"
+    }
+  ]
+}
+```
+
+**Split-Horizon DNS:**
+```json
+{
+  "default_upstream": "8.8.8.8:53",
+  "zone_configs": [
+    {
+      "zone_pattern": "*.internal.company.com",
+      "upstream": "10.0.1.10:53",
+      "description": "Internal domains via internal DNS"
+    },
+    {
+      "zone_pattern": "*.local",
+      "upstream": "127.0.0.1:5353",
+      "description": "mDNS domains via local resolver"
+    }
+  ]
+}
+```
+
+**Docker Container Routing:**
+```json
+{
+  "default_upstream": "1.1.1.1:53",
+  "client_configs": [
+    {
+      "client_pattern": "^172\\.17\\..*",
+      "upstream": "127.0.0.11:53",
+      "description": "Docker bridge network uses Docker's DNS"
+    },
+    {
+      "client_pattern": "^172\\.18\\..*",
+      "upstream": "8.8.8.8:53",
+      "description": "Custom Docker network uses Google DNS"
+    }
+  ]
+}
+```
+
+#### Pattern Matching
+
+**IP Address Patterns:**
+- **Exact Match**: `"192.168.1.100"` - matches only this IP
+- **CIDR Notation**: `"192.168.1.0/24"` - matches entire subnet
+- **Regex Pattern**: `"^10\\.0\\..*"` - matches any IP starting with 10.0.
+
+**Domain Patterns:**
+- **Exact Match**: `"example.com"` - matches only this domain
+- **Wildcard**: `"*.example.com"` - matches subdomains and the domain itself
+- **Regex Pattern**: `"^.*\\.local$"` - matches any domain ending with .local
+
+#### Configuration Validation
+```bash
+# Test configuration syntax
+jq . /config/upstream-config.json
+
+# Validate patterns with dfirewall
+./dfirewall -config-test /config/upstream-config.json
+```
+
+#### Integration with Environment Variables
+```bash
+# Set the configuration file path
+UPSTREAM_CONFIG=/config/upstream-config.json
+
+# The UPSTREAM environment variable becomes the fallback
+# when no upstream_config is specified or no rules match
+UPSTREAM=1.1.1.1:53
+
+# Start dfirewall with upstream routing
+docker-compose up
+```
+
 ## Docker Deployment Configuration
 
 ### Docker Compose Example
@@ -194,6 +387,8 @@ services:
       - UPSTREAM=1.1.1.1:53
       - REDIS=redis://127.0.0.1:6379
       - WEB_UI_PORT=8080
+      - UPSTREAM_CONFIG=/config/upstream-config.json
+      - TTL_GRACE_PERIOD_SECONDS=90
       - INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh
       - EXPIRE_SCRIPT=/scripts/expire_generic.sh
       - DEBUG=true
@@ -220,6 +415,10 @@ UPSTREAM=1.1.1.1:53
 REDIS=redis://127.0.0.1:6379
 PORT=53
 DEBUG=true
+
+# Advanced upstream routing
+UPSTREAM_CONFIG=/config/upstream-config.json
+TTL_GRACE_PERIOD_SECONDS=90
 
 # Scripts
 INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh
