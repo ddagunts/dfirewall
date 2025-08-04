@@ -95,12 +95,19 @@ func TestInRange(t *testing.T) {
 func TestRegister(t *testing.T) {
 	// Set required environment variable for testing
 	originalUpstream := os.Getenv("UPSTREAM")
+	originalWebUIPort := os.Getenv("WEB_UI_PORT")
 	os.Setenv("UPSTREAM", "1.1.1.1:53")
+	os.Unsetenv("WEB_UI_PORT") // Disable web UI during testing to avoid port conflicts
 	defer func() {
 		if originalUpstream != "" {
 			os.Setenv("UPSTREAM", originalUpstream)
 		} else {
 			os.Unsetenv("UPSTREAM")
+		}
+		if originalWebUIPort != "" {
+			os.Setenv("WEB_UI_PORT", originalWebUIPort)
+		} else {
+			os.Unsetenv("WEB_UI_PORT")
 		}
 	}()
 	tests := []struct {
@@ -133,7 +140,7 @@ func TestRegister(t *testing.T) {
 				From: net.ParseIP("192.168.1.100"),
 				To:   net.ParseIP("1.2.3.4"),
 			},
-			expectError: false,
+			expectError: true, // Empty zone should cause an error
 		},
 		{
 			name: "Different IP versions",

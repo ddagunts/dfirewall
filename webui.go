@@ -19,53 +19,62 @@ func startWebUI(port string, redisClient *redis.Client) {
 	log.Printf("Starting web UI server on port %s (HTTPS: %v, Auth: %v)", 
 		port, authConfig.HTTPSEnabled, isAuthEnabled())
 	
+	// Create a new ServeMux to avoid conflicts with global default ServeMux
+	mux := http.NewServeMux()
+	
 	// Authentication routes (always available)
-	http.HandleFunc("/login", handleLogin)
-	http.HandleFunc("/logout", handleLogout)
+	mux.HandleFunc("/login", handleLogin)
+	mux.HandleFunc("/logout", handleLogout)
 	
 	// Protected routes
-	http.HandleFunc("/", authMiddleware(handleUIHome))
-	http.HandleFunc("/api/rules", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", authMiddleware(handleUIHome))
+	mux.HandleFunc("/api/rules", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIRules(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/stats", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/stats", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIStats(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/rules/delete", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/rules/delete", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIDeleteRule(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/blacklist/ip/add", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/ip/add", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistIPAdd(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/blacklist/ip/remove", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/ip/remove", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistIPRemove(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/blacklist/domain/add", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/domain/add", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistDomainAdd(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/blacklist/domain/remove", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/domain/remove", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistDomainRemove(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/blacklist/list", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/list", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistList(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/reputation/check", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/reputation/check", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIReputationCheck(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/ai/analyze", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/ai/analyze", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIAIAnalyze(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/docs", authMiddleware(handleAPIDocs))
-	http.HandleFunc("/api/health", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/docs", authMiddleware(handleAPIDocs))
+	mux.HandleFunc("/api/health", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIHealth(w, r, redisClient)
 	}))
-	http.HandleFunc("/api/config/status", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/config/status", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIConfigStatus(w, r, redisClient)
+	}))
+	mux.HandleFunc("/api/logcollector/stats", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		handleAPILogCollectorStats(w, r, redisClient)
+	}))
+	mux.HandleFunc("/api/logcollector/config", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		handleAPILogCollectorConfig(w, r, redisClient)
 	}))
 	
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: nil, // Use default ServeMux
+		Handler: mux, // Use our custom ServeMux instead of default
 		// Set reasonable timeouts to prevent resource exhaustion
 		ReadTimeout:  30 * time.Second,  // Increased for authentication
 		WriteTimeout: 30 * time.Second,
@@ -90,6 +99,12 @@ func startWebUI(port string, redisClient *redis.Client) {
 
 // handleUIHome serves the main HTML page
 func handleUIHome(w http.ResponseWriter, r *http.Request) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
 	// ASSUMPTION: Embed HTML template directly in code to avoid external file dependencies
 	htmlTemplate := `
 <!DOCTYPE html>

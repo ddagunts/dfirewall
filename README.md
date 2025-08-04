@@ -113,3 +113,25 @@ dfirewall integrates AI technology (OpenAI, Claude, local models) for domain ana
 
 **📖 For detailed configuration, see:** [docs/ai-threat-detection.md](docs/ai-threat-detection.md)
 
+## Log Collection and Analysis
+
+dfirewall can collect and analyze logs from remote and local sources to extract IP addresses and domains for firewall rule creation. This feature enables proactive security by monitoring various log sources and automatically adding discovered threats to the firewall.
+
+### Key Features
+
+- **Remote Log Collection**: SSH-based log collection from remote servers
+- **Local File Monitoring**: Monitor local log files for changes
+- **Regex Pattern Matching**: Extract IPs and domains using configurable regex patterns
+- **Real-time Processing**: Process log entries as they appear
+- **Security Pipeline Integration**: Extracted IPs/domains go through blacklist, reputation, AI, and custom script validation
+- **Automatic Firewall Rules**: Valid threats automatically added to firewall rules
+
+### Quick Start
+
+```bash
+# Enable log collection
+LOG_COLLECTOR_CONFIG=/path/to/log-collector-config.json
+```
+
+**📖 For detailed configuration, see:** [docs/log-collection.md](docs/log-collection.md)
+

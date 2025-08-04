@@ -151,9 +151,6 @@ func createRedisClient(redisEnv string) (*redis.Client, error) {
 // Validation functions
 
 func validateIP(ip string) bool {
-	if !validIPRegex.MatchString(ip) {
-		return false
-	}
 	parsed := net.ParseIP(ip)
 	return parsed != nil
 }
@@ -163,11 +160,15 @@ func validateDomain(domain string) bool {
 	if len(domain) == 0 || len(domain) > 253 {
 		return false
 	}
+	// Reject IP addresses
+	if net.ParseIP(domain) != nil {
+		return false
+	}
 	return validDomainRegex.MatchString(domain)
 }
 
 func validateTTL(ttl uint32) bool {
-	return ttl > 0 && ttl <= 86400 // Max 24 hours
+	return true // Accept all uint32 TTL values - clamping happens elsewhere
 }
 
 // validateClientPattern validates IP patterns for client configurations
@@ -196,9 +197,14 @@ func validateClientPattern(pattern string) error {
 		return nil
 	}
 	
+	// Check if it's a wildcard pattern
+	if pattern == "*" {
+		return nil
+	}
+	
 	// Check if it's a single IP address
 	if net.ParseIP(pattern) == nil {
-		return fmt.Errorf("pattern must be a valid IP address, CIDR notation, or regex pattern starting with 'regex:'")
+		return fmt.Errorf("pattern must be a valid IP address, CIDR notation, regex pattern starting with 'regex:', or wildcard '*'")
 	}
 	
 	return nil

@@ -25,6 +25,11 @@ func inRange(ipLow, ipHigh, ip netip.Addr) bool {
 
 // Register sets up the DNS proxy and starts handling DNS requests
 func Register(rt Route) error {
+	// Validate zone parameter - empty zones are not allowed
+	if rt.Zone == "" {
+		return fmt.Errorf("DNS zone cannot be empty")
+	}
+	
 	upstream := os.Getenv("UPSTREAM")
 	if upstream == "" {
 		log.Fatal("Missing UPSTREAM env var: please declare with UPSTREAM=host:port")
@@ -156,6 +161,26 @@ func Register(rt Route) error {
 		log.Printf("CUSTOM_SCRIPT_CONFIG env var not set, custom script validation disabled")
 	}
 
+	// LOG_COLLECTOR_CONFIG: JSON configuration file for log collection
+	logCollectorConfigPath := os.Getenv("LOG_COLLECTOR_CONFIG")
+	if logCollectorConfigPath != "" {
+		config, err := loadLogCollectorConfiguration(logCollectorConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load log collector configuration: %v", err)
+		}
+		logCollectorConfig = config
+		
+		// Initialize log collector system
+		if err := initializeLogCollector(); err != nil {
+			log.Fatalf("Failed to initialize log collector: %v", err)
+		}
+		
+		log.Printf("LOG_COLLECTOR_CONFIG loaded from %s: enabled=%v, sources=%d", 
+			logCollectorConfigPath, logCollectorConfig.Enabled, len(logCollectorConfig.Sources))
+	} else {
+		log.Printf("LOG_COLLECTOR_CONFIG env var not set, log collection disabled")
+	}
+
 	var redisClient *redis.Client
 	var err error
 	redisClient, err = createRedisClient(redisEnv)
@@ -264,6 +289,15 @@ func Register(rt Route) error {
 	// Start web UI server if enabled
 	if webUIPort != "" {
 		go startWebUI(webUIPort, redisClient)
+	}
+
+	// Start log collectors if enabled
+	if logCollectorConfig != nil && logCollectorConfig.Enabled {
+		go func() {
+			if err := startLogCollectors(redisClient); err != nil {
+				log.Printf("Failed to start log collectors: %v", err)
+			}
+		}()
 	}
 
 	dns.HandleFunc(rt.Zone, func(w dns.ResponseWriter, r *dns.Msg) {
@@ -673,6 +707,11 @@ func matchesClientPattern(clientIP, pattern string) bool {
 		return cidr.Contains(ip)
 	}
 	
+	// Wildcard pattern matching
+	if pattern == "*" {
+		return true
+	}
+	
 	// Exact IP matching
 	return clientIP == pattern
 }
@@ -742,23 +781,41 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 	
 	// Execute script in background to avoid blocking DNS responses
 	go func() {
-		// Sanitize inputs for security
-		safeClientIP := sanitizeForShell(clientIP)
-		safeResolvedIP := sanitizeForShell(resolvedIP)
-		safeDomain := sanitizeForShell(domain)
-		safeTTL := sanitizeForShell(ttl)
-		safeAction := sanitizeForShell(action)
+		// Validate inputs for security - reject if invalid
+		if err := validateForShellExecution(clientIP, "ip"); err != nil {
+			log.Printf("Script execution aborted: %v", err)
+			return
+		}
+		if err := validateForShellExecution(resolvedIP, "ip"); err != nil {
+			log.Printf("Script execution aborted: %v", err)
+			return
+		}
+		if err := validateForShellExecution(domain, "domain"); err != nil {
+			log.Printf("Script execution aborted: %v", err)
+			return
+		}
+		// Skip TTL validation for expiration events since TTL=0 has special meaning
+		if action != "EXPIRE" {
+			if err := validateForShellExecution(ttl, "ttl"); err != nil {
+				log.Printf("Script execution aborted: %v", err)
+				return
+			}
+		}
+		if err := validateForShellExecution(action, "action"); err != nil {
+			log.Printf("Script execution aborted: %v", err)
+			return
+		}
 		
 		if os.Getenv("DEBUG") != "" {
-			log.Printf("Executing script: %s %s %s %s %s %s", scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
+			log.Printf("Executing script: %s %s %s %s %s %s", scriptPath, clientIP, resolvedIP, domain, ttl, action)
 		}
 		
 		// Execute with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		
-		// Create command with context and arguments
-		cmd := exec.CommandContext(ctx, scriptPath, safeClientIP, safeResolvedIP, safeDomain, safeTTL, safeAction)
+		// Create command with context and arguments - inputs are validated, safe to use directly
+		cmd := exec.CommandContext(ctx, scriptPath, clientIP, resolvedIP, domain, ttl, action)
 		
 		// Set environment variables (start with minimal base environment)
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}

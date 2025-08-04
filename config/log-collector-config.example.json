@@ -1,0 +1,137 @@
+{
+  "enabled": true,
+  "default_ttl": 3600,
+  "buffer_size": 65536,
+  "connect_timeout": 30,
+  "read_timeout": 60,
+  "reconnect_delay": 10,
+  "max_reconnects": -1,
+  "sources": [
+    {
+      "name": "nginx-access",
+      "type": "local",
+      "file_path": "/var/log/nginx/access.log",
+      "follow_rotation": true,
+      "start_from_end": true,
+      "enabled": true,
+      "patterns": [
+        {
+          "name": "nginx-access-ip",
+          "regex": "^([0-9\\.]+) - - \\[.*?\\] \".*?\" \\d+ \\d+ \".*?\" \".*?\"",
+          "type": "ip",
+          "ip_group": 1,
+          "enabled": true,
+          "test_string": "192.168.1.100 - - [04/Aug/2025:10:15:30 +0000] \"GET /api/status HTTP/1.1\" 200 1234 \"-\" \"curl/7.68.0\""
+        }
+      ]
+    },
+    {
+      "name": "apache-access",
+      "type": "ssh",
+      "host": "webserver.example.com",
+      "port": 22,
+      "username": "loguser",
+      "auth_method": "key",
+      "private_key_path": "/home/dfirewall/.ssh/id_rsa",
+      "file_path": "/var/log/apache2/access.log",
+      "follow_rotation": true,
+      "start_from_end": true,
+      "ttl": 7200,
+      "enabled": true,
+      "patterns": [
+        {
+          "name": "apache-access-ip",
+          "regex": "^([0-9\\.]+) - - \\[.*?\\] \".*?\" \\d+ \\d+",
+          "type": "ip",
+          "ip_group": 1,
+          "enabled": true,
+          "test_string": "10.0.1.50 - - [04/Aug/2025:10:15:30 +0000] \"POST /login HTTP/1.1\" 200 512"
+        }
+      ]
+    },
+    {
+      "name": "firewall-logs",
+      "type": "ssh",
+      "host": "firewall.example.com",
+      "port": 2222,
+      "username": "admin",
+      "auth_method": "password",
+      "password": "secure_password_123",
+      "file_path": "/var/log/firewall.log",
+      "follow_rotation": true,
+      "start_from_end": false,
+      "ttl": 1800,
+      "enabled": true,
+      "patterns": [
+        {
+          "name": "firewall-blocked-ip",
+          "regex": "BLOCKED: ([0-9\\.]+) -> ([0-9\\.]+)",
+          "type": "both",
+          "ip_group": 1,
+          "domain_group": 2,
+          "enabled": true,
+          "test_string": "Aug  4 10:15:30 fw01 kernel: BLOCKED: 192.168.1.100 -> 203.0.113.50"
+        },
+        {
+          "name": "firewall-dns-query",
+          "regex": "DNS Query from ([0-9\\.]+): ([a-zA-Z0-9.-]+)",
+          "type": "both",
+          "client_ip_group": 1,
+          "domain_group": 2,
+          "enabled": true,
+          "test_string": "Aug  4 10:15:30 fw01 dnsmasq: DNS Query from 192.168.1.100: example.com"
+        }
+      ]
+    },
+    {
+      "name": "application-logs",
+      "type": "local",
+      "file_path": "/var/log/myapp/connections.log",
+      "follow_rotation": true,
+      "start_from_end": true,
+      "enabled": true,
+      "patterns": [
+        {
+          "name": "app-outbound-connection",
+          "regex": "Connecting to ([a-zA-Z0-9.-]+) \\(([0-9\\.]+)\\)",
+          "type": "both",
+          "domain_group": 1,
+          "ip_group": 2,
+          "enabled": true,
+          "test_string": "2025-08-04 10:15:30 INFO Connecting to api.example.com (203.0.113.100)"
+        }
+      ]
+    },
+    {
+      "name": "proxy-logs",
+      "type": "ssh",
+      "host": "proxy.example.com",
+      "port": 22,
+      "username": "logcollector",
+      "auth_method": "key_password",
+      "private_key_path": "/home/dfirewall/.ssh/proxy_key",
+      "passphrase": "key_passphrase",
+      "password": "backup_password",
+      "file_path": "/var/log/squid/access.log",
+      "follow_rotation": true,
+      "start_from_end": true,
+      "ttl": 600,
+      "enabled": false,
+      "environment": {
+        "LOG_LEVEL": "INFO",
+        "SOURCE_TYPE": "PROXY"
+      },
+      "patterns": [
+        {
+          "name": "squid-access",
+          "regex": "^\\d+\\.\\d+ +\\d+ ([0-9\\.]+) \\w+/\\d+ \\d+ \\w+ (https?://[^/]+)",
+          "type": "both",
+          "client_ip_group": 1,
+          "domain_group": 2,
+          "enabled": true,
+          "test_string": "1691148930.123    156 192.168.1.100 TCP_MISS/200 1234 GET http://example.com/path"
+        }
+      ]
+    }
+  ]
+}

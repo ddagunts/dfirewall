@@ -12,7 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1912,9 +1912,124 @@ func checkDomainBlacklist(domain string, redisClient *redis.Client) bool {
 	return false
 }
 
-// sanitizeForShell removes any shell metacharacters for security
-func sanitizeForShell(input string) string {
-	return regexp.MustCompile(`[^a-zA-Z0-9\._\-]`).ReplaceAllString(input, "")
+// validateForShellExecution validates inputs for safe shell execution
+// Returns an error if the input is not safe to pass to a shell command
+func validateForShellExecution(input, inputType string) error {
+	if input == "" {
+		return fmt.Errorf("%s cannot be empty", inputType)
+	}
+	
+	switch inputType {
+	case "ip":
+		if !validateIPForExecution(input) {
+			return fmt.Errorf("invalid IP address: %s", input)
+		}
+	case "domain":
+		if !validateDomainForExecution(input) {
+			return fmt.Errorf("invalid domain name: %s", input)
+		}
+	case "ttl":
+		if !validateTTLForExecution(input) {
+			return fmt.Errorf("invalid TTL value: %s", input)
+		}
+	case "action":
+		if !validateActionForExecution(input) {
+			return fmt.Errorf("invalid action: %s", input)
+		}
+	default:
+		return fmt.Errorf("unknown input type: %s", inputType)
+	}
+	
+	return nil
+}
+
+// validateIPForExecution validates IP addresses for shell execution
+func validateIPForExecution(ip string) bool {
+	// Must be a valid IPv4 or IPv6 address
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	
+	// Additional check: must not contain any shell metacharacters
+	// Valid IPs should only contain digits, dots, colons, and hex characters (for IPv6)
+	for _, char := range ip {
+		if !((char >= '0' && char <= '9') || 
+			 (char >= 'a' && char <= 'f') || 
+			 (char >= 'A' && char <= 'F') || 
+			 char == '.' || char == ':') {
+			return false
+		}
+	}
+	
+	return true
+}
+
+// validateDomainForExecution validates domain names for shell execution
+func validateDomainForExecution(domain string) bool {
+	// Remove trailing dot if present
+	domain = strings.TrimSuffix(domain, ".")
+	
+	// Basic length checks
+	if len(domain) == 0 || len(domain) > 253 {
+		return false
+	}
+	
+	// Must not contain shell metacharacters
+	// Valid domains should only contain alphanumeric, dots, hyphens, and underscores
+	for _, char := range domain {
+		if !((char >= 'a' && char <= 'z') || 
+			 (char >= 'A' && char <= 'Z') || 
+			 (char >= '0' && char <= '9') || 
+			 char == '.' || char == '-' || char == '_') {
+			return false
+		}
+	}
+	
+	// Additional RFC validation
+	parts := strings.Split(domain, ".")
+	for _, part := range parts {
+		if len(part) == 0 || len(part) > 63 {
+			return false
+		}
+		// Cannot start or end with hyphen
+		if strings.HasPrefix(part, "-") || strings.HasSuffix(part, "-") {
+			return false
+		}
+	}
+	
+	return true
+}
+
+// validateTTLForExecution validates TTL values for shell execution
+func validateTTLForExecution(ttl string) bool {
+	// Must be a valid positive integer
+	value, err := strconv.ParseUint(ttl, 10, 32)
+	if err != nil {
+		return false
+	}
+	
+	// TTL should be reasonable (1 second to 24 hours)
+	return value > 0 && value <= 86400
+}
+
+// validateActionForExecution validates action strings for shell execution
+func validateActionForExecution(action string) bool {
+	// Only allow specific predefined actions (case-insensitive)
+	allowedActions := map[string]bool{
+		"add":    true,
+		"remove": true,
+		"expire": true,
+		"allow":  true,
+		"deny":   true,
+		"ADD":    true,
+		"REMOVE": true,
+		"EXPIRE": true,
+		"ALLOW":  true,
+		"DENY":   true,
+	}
+	
+	return allowedActions[action]
 }
 
 // validateInvokeScript validates script paths for security

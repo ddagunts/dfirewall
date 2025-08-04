@@ -21,6 +21,11 @@ var startTime = time.Now()
 
 // handleAPIRules returns all firewall rules from Redis
 func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	
 	ctx := context.Background()
 	
 	// ASSUMPTION: Get all keys matching our pattern "rules:*"
@@ -89,6 +94,11 @@ func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 
 // handleAPIStats returns statistics about the firewall rules
 func handleAPIStats(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	
 	ctx := context.Background()
 	
 	keys, err := redisClient.Keys(ctx, "rules:*").Result()
@@ -656,6 +666,18 @@ func handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 				Parameters:  "target: string (required), type: 'ip' or 'domain' (required)",
 				Example:     "curl -X POST http://localhost:8080/api/ai/analyze -H 'Content-Type: application/json' -d '{\"target\":\"suspicious-domain.com\",\"type\":\"domain\"}'",
 			},
+			{
+				Path:        "/api/logcollector/stats",
+				Method:      "GET",
+				Description: "Get log collector statistics including source status, lines processed, and extracted data counts",
+				Example:     "curl -X GET http://localhost:8080/api/logcollector/stats",
+			},
+			{
+				Path:        "/api/logcollector/config",
+				Method:      "GET",
+				Description: "Get log collector configuration including sources, patterns, and connection settings",
+				Example:     "curl -X GET http://localhost:8080/api/logcollector/config",
+			},
 		},
 	}
 	
@@ -709,6 +731,19 @@ func handleAPIHealth(w http.ResponseWriter, r *http.Request, redisClient *redis.
 	checks["reputation_enabled"] = reputationConfig != nil && reputationConfig.Enabled
 	checks["ai_enabled"] = aiConfig != nil && aiConfig.Enabled
 	checks["custom_scripts_enabled"] = customScriptConfig != nil && customScriptConfig.Enabled
+	checks["log_collector_enabled"] = logCollectorConfig != nil && logCollectorConfig.Enabled
+	
+	// Add log collector stats if enabled
+	if logCollectorConfig != nil && logCollectorConfig.Enabled {
+		stats := getLogCollectorStats()
+		checks["log_collector_stats"] = map[string]interface{}{
+			"total_sources":  stats.TotalSources,
+			"active_sources": stats.ActiveSources,
+			"total_lines":    stats.TotalLinesRead,
+			"ips_extracted":  stats.IPsExtracted,
+			"domains_extracted": stats.DomainsExtracted,
+		}
+	}
 	
 	health := HealthStatus{
 		Status:      overallStatus,
@@ -739,26 +774,63 @@ func handleAPIConfigStatus(w http.ResponseWriter, r *http.Request, redisClient *
 	}
 	
 	config := ConfigStatus{
-		ScriptConfig:     scriptConfig,
-		BlacklistConfig:  blacklistConfig,
-		ReputationConfig: reputationConfig,
-		AIConfig:         aiConfig,
+		ScriptConfig:       scriptConfig,
+		BlacklistConfig:    blacklistConfig,
+		ReputationConfig:   reputationConfig,
+		AIConfig:           aiConfig,
 		CustomScriptConfig: customScriptConfig,
-		WebUIAuthConfig:  authConfig,
+		WebUIAuthConfig:    authConfig,
+		LogCollectorConfig: logCollectorConfig,
 		Environment: map[string]string{
-			"UPSTREAM":         os.Getenv("UPSTREAM"),
-			"PORT":             os.Getenv("PORT"),
-			"WEB_UI_PORT":      os.Getenv("WEB_UI_PORT"),
-			"DEBUG":            os.Getenv("DEBUG"),
-			"HANDLE_ALL_IPS":   os.Getenv("HANDLE_ALL_IPS"),
-			"ENABLE_EDNS":      os.Getenv("ENABLE_EDNS"),
-			"INVOKE_SCRIPT":    os.Getenv("INVOKE_SCRIPT"),
-			"INVOKE_ALWAYS":    os.Getenv("INVOKE_ALWAYS"),
-			"EXPIRE_SCRIPT":    os.Getenv("EXPIRE_SCRIPT"),
+			"UPSTREAM":              os.Getenv("UPSTREAM"),
+			"PORT":                  os.Getenv("PORT"),
+			"WEB_UI_PORT":           os.Getenv("WEB_UI_PORT"),
+			"DEBUG":                 os.Getenv("DEBUG"),
+			"HANDLE_ALL_IPS":        os.Getenv("HANDLE_ALL_IPS"),
+			"ENABLE_EDNS":           os.Getenv("ENABLE_EDNS"),
+			"INVOKE_SCRIPT":         os.Getenv("INVOKE_SCRIPT"),
+			"INVOKE_ALWAYS":         os.Getenv("INVOKE_ALWAYS"),
+			"EXPIRE_SCRIPT":         os.Getenv("EXPIRE_SCRIPT"),
+			"LOG_COLLECTOR_CONFIG":  os.Getenv("LOG_COLLECTOR_CONFIG"),
 		},
 		LoadedAt: time.Now(),
 	}
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(config)
+}
+
+// handleAPILogCollectorStats returns log collector statistics
+func handleAPILogCollectorStats(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	stats := getLogCollectorStats()
+	
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		http.Error(w, "Error encoding stats: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// handleAPILogCollectorConfig returns log collector configuration
+func handleAPILogCollectorConfig(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	if logCollectorConfig == nil {
+		http.Error(w, "Log collector not configured", http.StatusNotFound)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(logCollectorConfig); err != nil {
+		http.Error(w, "Error encoding config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 }

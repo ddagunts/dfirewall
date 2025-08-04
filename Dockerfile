@@ -6,6 +6,8 @@ copy go.mod go.sum ./
 run go mod download
 
 copy *.go ./
+copy scripts /scripts
+copy config /config
 run go mod tidy
 
 # Run tests to ensure code quality
