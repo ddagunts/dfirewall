@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -29,6 +30,7 @@ type SessionManager struct {
 	secret   []byte
 	expiry   time.Duration
 	sessions map[string]*Session
+	mutex    sync.RWMutex
 }
 
 type Session struct {
@@ -329,10 +331,11 @@ func authenticateLDAP(username, password string) bool {
 		}
 	}
 	
-	// Search for user
-	searchFilter := fmt.Sprintf("(%s=%s)", authConfig.LDAPUserAttr, username)
+	// Search for user - escape username to prevent LDAP injection
+	escapedUsername := ldap.EscapeFilter(username)
+	searchFilter := fmt.Sprintf("(%s=%s)", authConfig.LDAPUserAttr, escapedUsername)
 	if authConfig.LDAPSearchFilter != "" {
-		searchFilter = fmt.Sprintf("(&%s(%s=%s))", authConfig.LDAPSearchFilter, authConfig.LDAPUserAttr, username)
+		searchFilter = fmt.Sprintf("(&%s(%s=%s))", authConfig.LDAPSearchFilter, authConfig.LDAPUserAttr, escapedUsername)
 	}
 	
 	searchRequest := ldap.NewSearchRequest(
@@ -383,12 +386,14 @@ func createSession(username string) (string, error) {
 	
 	// Store session
 	sessionID := generateSessionID()
+	sessionManager.mutex.Lock()
 	sessionManager.sessions[sessionID] = &Session{
 		ID:        sessionID,
 		Username:  username,
 		CreatedAt: time.Now(),
 		ExpiresAt: expirationTime,
 	}
+	sessionManager.mutex.Unlock()
 	
 	return tokenString, nil
 }
@@ -421,7 +426,7 @@ func getClientIP(r *http.Request) string {
 // isTrustedProxy checks if IP is in trusted proxy list
 func isTrustedProxy(ip string) bool {
 	if len(authConfig.TrustedProxies) == 0 {
-		return true // If no trusted proxies configured, trust all
+		return false // Default deny - require explicit proxy configuration
 	}
 	
 	clientIP := net.ParseIP(ip)
@@ -449,6 +454,13 @@ func isTrustedProxy(ip string) bool {
 
 // handleLogin handles the login page and authentication
 func handleLogin(w http.ResponseWriter, r *http.Request) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'")
+	
 	if r.Method == "GET" {
 		// Serve login page
 		loginHTML := `
@@ -554,12 +566,14 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 			return sessionManager.secret, nil
 		}); err == nil && tkn.Valid {
 			// Find and remove session
+			sessionManager.mutex.Lock()
 			for id, session := range sessionManager.sessions {
 				if session.Username == claims.Username {
 					delete(sessionManager.sessions, id)
 					break
 				}
 			}
+			sessionManager.mutex.Unlock()
 		}
 	}
 	
@@ -569,11 +583,13 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 // cleanupExpiredSessions removes expired sessions
 func cleanupExpiredSessions() {
 	now := time.Now()
+	sessionManager.mutex.Lock()
 	for id, session := range sessionManager.sessions {
 		if now.After(session.ExpiresAt) {
 			delete(sessionManager.sessions, id)
 		}
 	}
+	sessionManager.mutex.Unlock()
 }
 
 // periodicSessionCleanup runs session cleanup periodically

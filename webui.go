@@ -99,6 +99,12 @@ func startWebUI(port string, redisClient *redis.Client) {
 
 // handleUIHome serves the main HTML page
 func handleUIHome(w http.ResponseWriter, r *http.Request) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
 	// ASSUMPTION: Embed HTML template directly in code to avoid external file dependencies
 	htmlTemplate := `
 <!DOCTYPE html>

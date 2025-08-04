@@ -21,6 +21,11 @@ var startTime = time.Now()
 
 // handleAPIRules returns all firewall rules from Redis
 func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	
 	ctx := context.Background()
 	
 	// ASSUMPTION: Get all keys matching our pattern "rules:*"
@@ -89,6 +94,11 @@ func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 
 // handleAPIStats returns statistics about the firewall rules
 func handleAPIStats(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	
 	ctx := context.Background()
 	
 	keys, err := redisClient.Keys(ctx, "rules:*").Result()
