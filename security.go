@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1879,36 +1880,91 @@ func checkDomainBlacklist(domain string, redisClient *redis.Client) bool {
 	
 	ctx := context.Background()
 	
-	// Check Redis-based domain blacklist
+	// Check Redis-based domain blacklist (exact match, wildcards, and parent domains)
 	if blacklistConfig.RedisDomainKey != "" && redisClient != nil {
-		exists, err := redisClient.SIsMember(ctx, blacklistConfig.RedisDomainKey, normalizedDomain).Result()
+		// Get all patterns from Redis blacklist
+		patterns, err := redisClient.SMembers(ctx, blacklistConfig.RedisDomainKey).Result()
 		if err != nil {
-			log.Printf("WARNING: Failed to check Redis domain blacklist: %v", err)
-		} else if exists {
-			log.Printf("BLACKLIST HIT: Domain %s found in Redis blacklist set %s", normalizedDomain, blacklistConfig.RedisDomainKey)
-			return true
-		}
-	}
-	
-	// Check file-based domain blacklist
-	if domainBlacklist != nil && domainBlacklist[normalizedDomain] {
-		log.Printf("BLACKLIST HIT: Domain %s found in file-based domain blacklist", normalizedDomain)
-		return true
-	}
-	
-	// QUESTION: Should we also check parent domains for subdomain blocking?
-	// ASSUMPTION: Check parent domains for comprehensive blocking (e.g., block evil.com also blocks sub.evil.com)
-	if domainBlacklist != nil {
-		parts := strings.Split(normalizedDomain, ".")
-		for i := 1; i < len(parts); i++ {
-			parentDomain := strings.Join(parts[i:], ".")
-			if domainBlacklist[parentDomain] {
-				log.Printf("BLACKLIST HIT: Domain %s blocked by parent domain %s in blacklist", normalizedDomain, parentDomain)
-				return true
+			log.Printf("WARNING: Failed to get Redis domain blacklist patterns: %v", err)
+		} else {
+			// Check each pattern against the domain
+			for _, pattern := range patterns {
+				if matchesDomainPattern(normalizedDomain, pattern) {
+					log.Printf("BLACKLIST HIT: Domain %s matched pattern %s in Redis blacklist", normalizedDomain, pattern)
+					return true
+				}
+			}
+			
+			// Also check parent domains for backwards compatibility
+			parts := strings.Split(normalizedDomain, ".")
+			for i := 1; i < len(parts); i++ {
+				parentDomain := strings.Join(parts[i:], ".")
+				for _, pattern := range patterns {
+					if matchesDomainPattern(parentDomain, pattern) {
+						log.Printf("BLACKLIST HIT: Domain %s blocked by parent domain %s matching pattern %s in Redis blacklist", normalizedDomain, parentDomain, pattern)
+						return true
+					}
+				}
 			}
 		}
 	}
 	
+	// Check file-based domain blacklist (exact match, wildcards, and parent domains)
+	if domainBlacklist != nil {
+		// Check each pattern in the file-based blacklist
+		for pattern := range domainBlacklist {
+			if matchesDomainPattern(normalizedDomain, pattern) {
+				log.Printf("BLACKLIST HIT: Domain %s matched pattern %s in file-based blacklist", normalizedDomain, pattern)
+				return true
+			}
+		}
+		
+		// Also check parent domains for backwards compatibility
+		parts := strings.Split(normalizedDomain, ".")
+		for i := 1; i < len(parts); i++ {
+			parentDomain := strings.Join(parts[i:], ".")
+			for pattern := range domainBlacklist {
+				if matchesDomainPattern(parentDomain, pattern) {
+					log.Printf("BLACKLIST HIT: Domain %s blocked by parent domain %s matching pattern %s in file-based blacklist", normalizedDomain, parentDomain, pattern)
+					return true
+				}
+			}
+		}
+	}
+	
+	return false
+}
+
+// matchesDomainPattern checks if a domain matches a pattern with wildcard support
+// This provides consistent pattern matching for both upstream zones and blacklists
+// Supports exact matches, wildcards (*.example.com), and regex patterns
+func matchesDomainPattern(domain, pattern string) bool {
+	if pattern == "" {
+		return false
+	}
+
+	// Normalize both domain and pattern
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	pattern = strings.ToLower(strings.TrimSuffix(pattern, "."))
+
+	// Exact match
+	if domain == pattern {
+		return true
+	}
+
+	// Wildcard pattern (*.example.com)
+	if strings.HasPrefix(pattern, "*.") {
+		suffix := pattern[2:] // Remove "*."
+		return strings.HasSuffix(domain, "."+suffix) || domain == suffix
+	}
+
+	// Try regex pattern (if it contains regex metacharacters)
+	if strings.ContainsAny(pattern, "^$()[]{}|+?\\") {
+		if matched, err := regexp.MatchString(pattern, domain); err == nil {
+			return matched
+		}
+	}
+
 	return false
 }
 

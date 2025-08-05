@@ -75,30 +75,9 @@ func selectUpstreamResolver(clientIP, domain, defaultUpstream string, upstreamCo
 
 // matchesZonePattern checks if a domain matches a zone pattern
 // Supports exact matches, wildcards (*.example.com), and regex patterns
+// This is now a wrapper around the shared matchesDomainPattern function for consistency
 func matchesZonePattern(domain, pattern string) bool {
-	if pattern == "" {
-		return false
-	}
-
-	// Exact match
-	if domain == pattern {
-		return true
-	}
-
-	// Wildcard pattern (*.example.com)
-	if strings.HasPrefix(pattern, "*.") {
-		suffix := pattern[2:] // Remove "*."
-		return strings.HasSuffix(domain, "."+suffix) || domain == suffix
-	}
-
-	// Try regex pattern (if it contains regex metacharacters)
-	if strings.ContainsAny(pattern, "^$()[]{}|+?\\") {
-		if matched, err := regexp.MatchString(pattern, domain); err == nil {
-			return matched
-		}
-	}
-
-	return false
+	return matchesDomainPattern(domain, pattern)
 }
 
 // Register sets up the DNS proxy and starts handling DNS requests
