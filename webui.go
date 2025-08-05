@@ -3,10 +3,41 @@ package main
 import (
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// Simple rate limiting configuration
+const (
+	maxRequestsPerMinute = 60  // Allow 60 requests per minute per IP
+	rateWindowMinutes    = 1   // 1 minute sliding window
+	maxLoginAttempts     = 5   // Allow 5 login attempts per minute per IP
+)
+
+// requestRecord tracks requests for rate limiting
+type requestRecord struct {
+	count     int
+	lastReset time.Time
+}
+
+// rateLimiter provides simple in-memory rate limiting
+type rateLimiter struct {
+	mu      sync.RWMutex
+	clients map[string]*requestRecord
+	logins  map[string]*requestRecord // Separate limit for login attempts
+}
+
+var globalRateLimiter = &rateLimiter{
+	clients: make(map[string]*requestRecord),
+	logins:  make(map[string]*requestRecord),
+}
+
+// protectedHandler combines rate limiting and authentication middleware
+func protectedHandler(handler http.HandlerFunc) http.HandlerFunc {
+	return rateLimitMiddleware(authMiddleware(handler))
+}
 
 // startWebUI starts the web UI server for rule management
 func startWebUI(port string, redisClient *redis.Client) {
@@ -16,59 +47,63 @@ func startWebUI(port string, redisClient *redis.Client) {
 	// Start periodic session cleanup
 	periodicSessionCleanup()
 	
+	// Start rate limit cleanup
+	startRateLimitCleanup()
+	
 	log.Printf("Starting web UI server on port %s (HTTPS: %v, Auth: %v)", 
 		port, authConfig.HTTPSEnabled, isAuthEnabled())
 	
 	// Create a new ServeMux to avoid conflicts with global default ServeMux
 	mux := http.NewServeMux()
 	
-	// Authentication routes (always available)
-	mux.HandleFunc("/login", handleLogin)
-	mux.HandleFunc("/logout", handleLogout)
+	// Authentication routes (always available) with rate limiting
+	mux.HandleFunc("/login", rateLimitMiddleware(handleLogin))
+	mux.HandleFunc("/logout", rateLimitMiddleware(handleLogout))
 	
-	// Protected routes
-	mux.HandleFunc("/", authMiddleware(handleUIHome))
-	mux.HandleFunc("/api/rules", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	// Protected routes with rate limiting and authentication
+	
+	mux.HandleFunc("/", protectedHandler(handleUIHome))
+	mux.HandleFunc("/api/rules", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIRules(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/stats", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/stats", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIStats(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/rules/delete", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/rules/delete", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIDeleteRule(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/blacklist/ip/add", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/ip/add", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistIPAdd(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/blacklist/ip/remove", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/ip/remove", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistIPRemove(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/blacklist/domain/add", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/domain/add", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistDomainAdd(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/blacklist/domain/remove", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/domain/remove", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistDomainRemove(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/blacklist/list", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/blacklist/list", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIBlacklistList(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/reputation/check", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/reputation/check", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIReputationCheck(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/ai/analyze", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/ai/analyze", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIAIAnalyze(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/docs", authMiddleware(handleAPIDocs))
-	mux.HandleFunc("/api/health", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/docs", protectedHandler(handleAPIDocs))
+	mux.HandleFunc("/api/health", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIHealth(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/config/status", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/config/status", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPIConfigStatus(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/logcollector/stats", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/logcollector/stats", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPILogCollectorStats(w, r, redisClient)
 	}))
-	mux.HandleFunc("/api/logcollector/config", authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/logcollector/config", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
 		handleAPILogCollectorConfig(w, r, redisClient)
 	}))
 	
@@ -641,4 +676,106 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(htmlTemplate))
+}
+
+// isRateLimited checks if the client IP has exceeded the rate limit
+func (rl *rateLimiter) isRateLimited(clientIP string, isLogin bool) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	
+	// Choose the appropriate map and limit based on request type
+	var clientMap map[string]*requestRecord
+	var maxRequests int
+	
+	if isLogin {
+		clientMap = rl.logins
+		maxRequests = maxLoginAttempts
+	} else {
+		clientMap = rl.clients
+		maxRequests = maxRequestsPerMinute
+	}
+	
+	now := time.Now()
+	record, exists := clientMap[clientIP]
+	
+	if !exists {
+		// First request from this IP
+		clientMap[clientIP] = &requestRecord{
+			count:     1,
+			lastReset: now,
+		}
+		return false
+	}
+	
+	// Check if we need to reset the window
+	if now.Sub(record.lastReset) >= time.Duration(rateWindowMinutes)*time.Minute {
+		record.count = 1
+		record.lastReset = now
+		return false
+	}
+	
+	// Increment count and check limit
+	record.count++
+	return record.count > maxRequests
+}
+
+// cleanupOldRecords removes old rate limiting records (call periodically)
+func (rl *rateLimiter) cleanupOldRecords() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	
+	now := time.Now()
+	cutoff := time.Duration(rateWindowMinutes*2) * time.Minute // Keep records for 2 windows
+	
+	// Clean up general request records
+	for ip, record := range rl.clients {
+		if now.Sub(record.lastReset) > cutoff {
+			delete(rl.clients, ip)
+		}
+	}
+	
+	// Clean up login attempt records  
+	for ip, record := range rl.logins {
+		if now.Sub(record.lastReset) > cutoff {
+			delete(rl.logins, ip)
+		}
+	}
+}
+
+// rateLimitMiddleware provides rate limiting for HTTP requests
+func rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		clientIP := getClientIP(r)
+		
+		// Check if this is a login request
+		isLogin := r.URL.Path == "/login" && r.Method == "POST"
+		
+		if globalRateLimiter.isRateLimited(clientIP, isLogin) {
+			if isLogin {
+				log.Printf("Login rate limit exceeded for IP: %s", clientIP)
+				http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
+			} else {
+				log.Printf("Rate limit exceeded for IP: %s", clientIP)
+				http.Error(w, "Rate limit exceeded. Please slow down.", http.StatusTooManyRequests)
+			}
+			return
+		}
+		
+		next(w, r)
+	}
+}
+
+// startRateLimitCleanup starts a goroutine to periodically clean up old rate limit records
+func startRateLimitCleanup() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute) // Clean up every 5 minutes
+		defer ticker.Stop()
+		
+		for {
+			select {
+			case <-ticker.C:
+				globalRateLimiter.cleanupOldRecords()
+			}
+		}
+	}()
 }

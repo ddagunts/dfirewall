@@ -15,9 +15,16 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+)
+
+// Cache configuration constants
+const (
+	maxCacheSize        = 10000 // Maximum entries per cache
+	cacheCleanupInterval = 5 * time.Minute // How often to clean expired entries
 )
 
 // Global variables for configuration
@@ -35,6 +42,11 @@ var (
 	aiAnalysisCache     map[string]*AIAnalysisResult
 	customScriptCache   map[string]*CustomScriptResult
 	trafficPatterns     map[string]*AITrafficPattern
+
+	// Cache management
+	cacheMutex          sync.RWMutex
+	cacheCleanupTicker  *time.Ticker
+	cacheCleanupStop    chan bool
 
 	// HTTP client for reputation checks
 	httpClient *http.Client
@@ -334,14 +346,24 @@ func executeCustomScript(target, targetType string) *CustomScriptResult {
 	// ASSUMPTION: Check cache first if caching is enabled
 	cacheKey := fmt.Sprintf("custom:%s:%s", targetType, target)
 	if customScriptConfig.CacheResults {
+		cacheMutex.RLock()
 		if cached, exists := customScriptCache[cacheKey]; exists {
 			// ASSUMPTION: Use configured cache TTL
 			if time.Since(cached.Timestamp) < time.Duration(customScriptConfig.CacheExpiration)*time.Second {
 				cached.FromCache = true
+				cacheMutex.RUnlock()
 				return cached
 			}
-			// Cache expired, remove it
-			delete(customScriptCache, cacheKey)
+		}
+		cacheMutex.RUnlock()
+		
+		// Cache expired, remove it
+		if cached, exists := customScriptCache[cacheKey]; exists {
+			if time.Since(cached.Timestamp) >= time.Duration(customScriptConfig.CacheExpiration)*time.Second {
+				cacheMutex.Lock()
+				delete(customScriptCache, cacheKey)
+				cacheMutex.Unlock()
+			}
 		}
 	}
 
@@ -392,7 +414,9 @@ func executeCustomScript(target, targetType string) *CustomScriptResult {
 
 	// Cache successful results if configured
 	if customScriptConfig.CacheResults && result.ExitCode != -1 {
+		cacheMutex.Lock()
 		customScriptCache[cacheKey] = result
+		cacheMutex.Unlock()
 	}
 
 	// Log decisions if configured
@@ -579,13 +603,24 @@ func analyzeWithAI(request *AIAnalysisRequest, redisClient *redis.Client) *AIAna
 	
 	// ASSUMPTION: Check cache first to avoid duplicate AI requests
 	cacheKey := fmt.Sprintf("ai:%s:%s", request.QueryType, request.Target)
+	cacheMutex.RLock()
 	if cached, exists := aiAnalysisCache[cacheKey]; exists {
 		// ASSUMPTION: Cache results for configured time to reduce AI API costs
 		if time.Since(cached.Timestamp) < time.Duration(aiConfig.CacheExpiration)*time.Second {
 			cached.FromCache = true
+			cacheMutex.RUnlock()
 			return cached
 		}
-		delete(aiAnalysisCache, cacheKey)
+	}
+	cacheMutex.RUnlock()
+	
+	// Cache expired, remove it
+	if cached, exists := aiAnalysisCache[cacheKey]; exists {
+		if time.Since(cached.Timestamp) >= time.Duration(aiConfig.CacheExpiration)*time.Second {
+			cacheMutex.Lock()
+			delete(aiAnalysisCache, cacheKey)
+			cacheMutex.Unlock()
+		}
 	}
 
 	var result *AIAnalysisResult
@@ -623,7 +658,9 @@ func analyzeWithAI(request *AIAnalysisRequest, redisClient *redis.Client) *AIAna
 	result.FromCache = false
 
 	// Cache successful results
+	cacheMutex.Lock()
 	aiAnalysisCache[cacheKey] = result
+	cacheMutex.Unlock()
 
 	// QUESTION: Should we also store AI analysis results in Redis for persistence?
 	// ASSUMPTION: Store in Redis for historical analysis and sharing between instances
@@ -1322,6 +1359,9 @@ func initializeReputationSystem() {
 	reputationCache = make(map[string]*ReputationResult)
 	rateLimiters = make(map[string]*time.Ticker)
 	
+	// Initialize cache cleanup routine
+	initializeCacheCleanup()
+	
 	// Initialize rate limiters for each enabled checker
 	for _, checker := range reputationConfig.Checkers {
 		if checker.Enabled {
@@ -1344,15 +1384,25 @@ func checkReputation(target, targetType string, redisClient *redis.Client) *Repu
 	cacheKey := fmt.Sprintf("dfirewall:reputation:%s:%s", targetType, target)
 	
 	// Check in-memory cache first
+	cacheMutex.RLock()
 	if cached, exists := reputationCache[cacheKey]; exists {
 		// Use default cache TTL of 1 hour (3600 seconds)
 		defaultCacheTTL := 3600
 		if time.Since(cached.CheckedAt) < time.Duration(defaultCacheTTL)*time.Second {
 			cached.CacheHit = true
+			cacheMutex.RUnlock()
 			return cached
 		}
-		// Cache expired, remove it  
-		delete(reputationCache, cacheKey)
+	}
+	cacheMutex.RUnlock()
+	
+	// Cache expired, remove it  
+	if cached, exists := reputationCache[cacheKey]; exists {
+		if time.Since(cached.CheckedAt) >= time.Duration(3600)*time.Second {
+			cacheMutex.Lock()
+			delete(reputationCache, cacheKey)
+			cacheMutex.Unlock()
+		}
 	}
 	
 	// Check Redis cache if enabled
@@ -1363,7 +1413,9 @@ func checkReputation(target, targetType string, redisClient *redis.Client) *Repu
 			if json.Unmarshal([]byte(data), &result) == nil {
 				result.CacheHit = true
 				// Also cache in memory for faster subsequent access
+				cacheMutex.Lock()
 				reputationCache[cacheKey] = &result
+				cacheMutex.Unlock()
 				return &result
 			}
 		}
@@ -1392,7 +1444,9 @@ func checkReputation(target, targetType string, redisClient *redis.Client) *Repu
 			// Cache the result
 			if reputationConfig.CacheResults {
 				// Cache in memory
+				cacheMutex.Lock()
 				reputationCache[cacheKey] = result
+				cacheMutex.Unlock()
 				
 				// Cache in Redis if available
 				if redisClient != nil {
@@ -2202,4 +2256,201 @@ func validateRedisKeyComponents(clientIP, resolvedIP, domain string) error {
 	}
 	
 	return nil
+}
+
+// initializeCacheCleanup starts the cache cleanup routine
+func initializeCacheCleanup() {
+	cacheCleanupTicker = time.NewTicker(cacheCleanupInterval)
+	cacheCleanupStop = make(chan bool, 1)
+	
+	go func() {
+		for {
+			select {
+			case <-cacheCleanupTicker.C:
+				cleanupExpiredCacheEntries()
+			case <-cacheCleanupStop:
+				cacheCleanupTicker.Stop()
+				return
+			}
+		}
+	}()
+	
+	log.Printf("Cache cleanup initialized with %v interval", cacheCleanupInterval)
+}
+
+// stopCacheCleanup stops the cache cleanup routine
+func stopCacheCleanup() {
+	if cacheCleanupStop != nil {
+		cacheCleanupStop <- true
+	}
+}
+
+// cleanupExpiredCacheEntries removes expired entries from all caches
+func cleanupExpiredCacheEntries() {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+	
+	var totalCleaned int
+	
+	// Clean reputation cache
+	if reputationCache != nil {
+		cleaned := cleanupReputationCache()
+		totalCleaned += cleaned
+	}
+	
+	// Clean AI analysis cache
+	if aiAnalysisCache != nil {
+		cleaned := cleanupAIAnalysisCache()
+		totalCleaned += cleaned
+	}
+	
+	// Clean custom script cache
+	if customScriptCache != nil {
+		cleaned := cleanupCustomScriptCache()
+		totalCleaned += cleaned
+	}
+	
+	if totalCleaned > 0 {
+		log.Printf("Cache cleanup: removed %d expired entries", totalCleaned)
+	}
+}
+
+// cleanupReputationCache removes expired reputation cache entries
+func cleanupReputationCache() int {
+	var cleaned int
+	defaultCacheTTL := 3600 // 1 hour default
+	
+	if reputationConfig != nil && reputationConfig.CacheExpiration > 0 {
+		defaultCacheTTL = reputationConfig.CacheExpiration
+	}
+	
+	for key, entry := range reputationCache {
+		if time.Since(entry.CheckedAt) > time.Duration(defaultCacheTTL)*time.Second {
+			delete(reputationCache, key)
+			cleaned++
+		}
+	}
+	
+	// If cache is still too large, remove oldest entries
+	if len(reputationCache) > maxCacheSize {
+		// Convert to slice for sorting by timestamp
+		type cacheEntry struct {
+			key       string
+			timestamp time.Time
+		}
+		entries := make([]cacheEntry, 0, len(reputationCache))
+		for key, entry := range reputationCache {
+			entries = append(entries, cacheEntry{key: key, timestamp: entry.CheckedAt})
+		}
+		
+		// Sort by timestamp (oldest first)
+		for i := 0; i < len(entries)-1; i++ {
+			for j := i + 1; j < len(entries); j++ {
+				if entries[i].timestamp.After(entries[j].timestamp) {
+					entries[i], entries[j] = entries[j], entries[i]
+				}
+			}
+		}
+		
+		// Remove oldest entries until we're under the limit
+		toRemove := len(reputationCache) - maxCacheSize
+		for i := 0; i < toRemove && i < len(entries); i++ {
+			delete(reputationCache, entries[i].key)
+			cleaned++
+		}
+	}
+	
+	return cleaned
+}
+
+// cleanupAIAnalysisCache removes expired AI analysis cache entries
+func cleanupAIAnalysisCache() int {
+	var cleaned int
+	defaultCacheTTL := 1800 // 30 minutes default
+	
+	if aiConfig != nil && aiConfig.CacheExpiration > 0 {
+		defaultCacheTTL = aiConfig.CacheExpiration
+	}
+	
+	for key, entry := range aiAnalysisCache {
+		if time.Since(entry.Timestamp) > time.Duration(defaultCacheTTL)*time.Second {
+			delete(aiAnalysisCache, key)
+			cleaned++
+		}
+	}
+	
+	// If cache is still too large, remove oldest entries
+	if len(aiAnalysisCache) > maxCacheSize {
+		type cacheEntry struct {
+			key       string
+			timestamp time.Time
+		}
+		entries := make([]cacheEntry, 0, len(aiAnalysisCache))
+		for key, entry := range aiAnalysisCache {
+			entries = append(entries, cacheEntry{key: key, timestamp: entry.Timestamp})
+		}
+		
+		// Sort by timestamp (oldest first)
+		for i := 0; i < len(entries)-1; i++ {
+			for j := i + 1; j < len(entries); j++ {
+				if entries[i].timestamp.After(entries[j].timestamp) {
+					entries[i], entries[j] = entries[j], entries[i]
+				}
+			}
+		}
+		
+		toRemove := len(aiAnalysisCache) - maxCacheSize
+		for i := 0; i < toRemove && i < len(entries); i++ {
+			delete(aiAnalysisCache, entries[i].key)
+			cleaned++
+		}
+	}
+	
+	return cleaned
+}
+
+// cleanupCustomScriptCache removes expired custom script cache entries
+func cleanupCustomScriptCache() int {
+	var cleaned int
+	defaultCacheTTL := 300 // 5 minutes default
+	
+	if customScriptConfig != nil && customScriptConfig.CacheExpiration > 0 {
+		defaultCacheTTL = customScriptConfig.CacheExpiration
+	}
+	
+	for key, entry := range customScriptCache {
+		if time.Since(entry.Timestamp) > time.Duration(defaultCacheTTL)*time.Second {
+			delete(customScriptCache, key)
+			cleaned++
+		}
+	}
+	
+	// If cache is still too large, remove oldest entries
+	if len(customScriptCache) > maxCacheSize {
+		type cacheEntry struct {
+			key       string
+			timestamp time.Time
+		}
+		entries := make([]cacheEntry, 0, len(customScriptCache))
+		for key, entry := range customScriptCache {
+			entries = append(entries, cacheEntry{key: key, timestamp: entry.Timestamp})
+		}
+		
+		// Sort by timestamp (oldest first)
+		for i := 0; i < len(entries)-1; i++ {
+			for j := i + 1; j < len(entries); j++ {
+				if entries[i].timestamp.After(entries[j].timestamp) {
+					entries[i], entries[j] = entries[j], entries[i]
+				}
+			}
+		}
+		
+		toRemove := len(customScriptCache) - maxCacheSize
+		for i := 0; i < toRemove && i < len(entries); i++ {
+			delete(customScriptCache, entries[i].key)
+			cleaned++
+		}
+	}
+	
+	return cleaned
 }

@@ -760,7 +760,7 @@ func handleAPIHealth(w http.ResponseWriter, r *http.Request, redisClient *redis.
 	json.NewEncoder(w).Encode(health)
 }
 
-// handleAPIConfigStatus returns configuration and feature status  
+// handleAPIConfigStatus returns configuration and feature status with sensitive data sanitized
 func handleAPIConfigStatus(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
 	if r.Method != "GET" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -770,11 +770,11 @@ func handleAPIConfigStatus(w http.ResponseWriter, r *http.Request, redisClient *
 	config := ConfigStatus{
 		ScriptConfig:       scriptConfig,
 		BlacklistConfig:    blacklistConfig,
-		ReputationConfig:   reputationConfig,
-		AIConfig:           aiConfig,
+		ReputationConfig:   sanitizeReputationConfig(reputationConfig),
+		AIConfig:           sanitizeAIConfig(aiConfig),
 		CustomScriptConfig: customScriptConfig,
-		WebUIAuthConfig:    authConfig,
-		LogCollectorConfig: logCollectorConfig,
+		WebUIAuthConfig:    sanitizeAuthConfig(authConfig),
+		LogCollectorConfig: sanitizeLogCollectorConfig(logCollectorConfig),
 		Environment: map[string]string{
 			"UPSTREAM":              os.Getenv("UPSTREAM"),
 			"PORT":                  os.Getenv("PORT"),
@@ -823,8 +823,94 @@ func handleAPILogCollectorConfig(w http.ResponseWriter, r *http.Request, redisCl
 	}
 	
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(logCollectorConfig); err != nil {
+	if err := json.NewEncoder(w).Encode(sanitizeLogCollectorConfig(logCollectorConfig)); err != nil {
 		http.Error(w, "Error encoding config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+// sanitizeReputationConfig removes sensitive API keys from reputation configuration
+func sanitizeReputationConfig(config *ReputationConfig) *ReputationConfig {
+	if config == nil {
+		return nil
+	}
+	
+	// Create a copy to avoid modifying the original
+	sanitized := *config
+	sanitized.Checkers = make([]ReputationChecker, len(config.Checkers))
+	
+	for i, checker := range config.Checkers {
+		sanitized.Checkers[i] = checker
+		// Mask API key if present
+		if sanitized.Checkers[i].APIKey != "" {
+			sanitized.Checkers[i].APIKey = "[REDACTED]"
+		}
+	}
+	
+	return &sanitized
+}
+
+// sanitizeAIConfig removes sensitive API keys from AI configuration
+func sanitizeAIConfig(config *AIConfig) *AIConfig {
+	if config == nil {
+		return nil
+	}
+	
+	// Create a copy to avoid modifying the original
+	sanitized := *config
+	// Mask API key if present
+	if sanitized.APIKey != "" {
+		sanitized.APIKey = "[REDACTED]"
+	}
+	
+	return &sanitized
+}
+
+// sanitizeAuthConfig removes sensitive credentials from auth configuration
+func sanitizeAuthConfig(config *WebUIAuthConfig) *WebUIAuthConfig {
+	if config == nil {
+		return nil
+	}
+	
+	// Create a copy to avoid modifying the original
+	sanitized := *config
+	// Mask sensitive fields
+	if sanitized.Password != "" {
+		sanitized.Password = "[REDACTED]"
+	}
+	if sanitized.LDAPBindPass != "" {
+		sanitized.LDAPBindPass = "[REDACTED]"
+	}
+	if sanitized.SessionSecret != "" {
+		sanitized.SessionSecret = "[REDACTED]"
+	}
+	
+	return &sanitized
+}
+
+// sanitizeLogCollectorConfig removes sensitive credentials from log collector configuration
+func sanitizeLogCollectorConfig(config *LogCollectorConfig) *LogCollectorConfig {
+	if config == nil {
+		return nil
+	}
+	
+	// Create a copy to avoid modifying the original
+	sanitized := *config
+	sanitized.Sources = make([]LogSource, len(config.Sources))
+	
+	for i, source := range config.Sources {
+		sanitized.Sources[i] = source
+		// Mask SSH credentials if present
+		if sanitized.Sources[i].Password != "" {
+			sanitized.Sources[i].Password = "[REDACTED]"
+		}
+		if sanitized.Sources[i].PrivateKeyData != "" {
+			sanitized.Sources[i].PrivateKeyData = "[REDACTED]"
+		}
+		if sanitized.Sources[i].Passphrase != "" {
+			sanitized.Sources[i].Passphrase = "[REDACTED]"
+		}
+	}
+	
+	return &sanitized
 }

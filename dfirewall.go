@@ -54,5 +54,10 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	s := <-sig
-	log.Fatalf("Signal (%v) received, stopping", s)
+	log.Printf("Signal (%v) received, stopping...", s)
+	
+	// Gracefully stop cache cleanup
+	stopCacheCleanup()
+	
+	log.Fatalf("dfirewall stopped")
 }

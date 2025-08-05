@@ -58,8 +58,9 @@ Create `/etc/dfirewall/blocked_domains.txt`:
 # Domain Blacklist - one entry per line
 # Comments start with #
 malware.example.com
-*.phishing.com
+*.phishing.com      # Wildcard patterns supported 
 badactor.org
+^evil.*\.com$       # Regex patterns supported
 suspicious-site.net
 ```
 
@@ -82,11 +83,14 @@ redis-cli SADD dfirewall:blacklist:ips "1.2.3.4" "5.6.7.8" "9.10.11.12"
 # Add single domain
 redis-cli SADD dfirewall:blacklist:domains "malware.example.com"
 
-# Add wildcard domain
+# Add wildcard domain (blocks all subdomains)
 redis-cli SADD dfirewall:blacklist:domains "*.phishing.com"
 
-# Add multiple domains
-redis-cli SADD dfirewall:blacklist:domains "bad1.com" "bad2.org" "malicious.net"
+# Add regex pattern
+redis-cli SADD dfirewall:blacklist:domains "^evil.*\.com$"
+
+# Add multiple domains with different patterns
+redis-cli SADD dfirewall:blacklist:domains "bad1.com" "*.bad2.org" "^malicious.*\.net$"
 ```
 
 ## Configuration Options
@@ -113,6 +117,24 @@ redis-cli SADD dfirewall:blacklist:domains "bad1.com" "bad2.org" "malicious.net"
 
 ### Performance Settings
 - **`refresh_interval`**: Seconds between file-based blacklist refreshes
+
+## Recent Security Improvements
+
+### 🆕 Enhanced Domain Pattern Matching
+Recent security improvements have significantly enhanced domain blacklist functionality:
+
+- **Wildcard Pattern Support**: Both Redis and file-based blacklists now support wildcard patterns like `*.evil.com`
+- **Consistent Parent Domain Blocking**: Adding `evil.com` to any blacklist now blocks `www.evil.com`, `api.evil.com`, etc.
+- **CNAME Bypass Prevention**: Fixed vulnerability where domains with CNAME records could bypass blacklists
+- **Unified Pattern Matching**: Consistent wildcard and regex support across all blacklist types
+
+### Pattern Support Matrix
+| Pattern Type | File Blacklist | Redis Blacklist | Example |
+|-------------|---------------|-----------------|---------|
+| Exact Match | ✅ | ✅ | `evil.com` |
+| Parent Domain | ✅ | ✅ | `evil.com` blocks `www.evil.com` |
+| Wildcard | ✅ | ✅ | `*.evil.com` |
+| Regex | ✅ | ✅ | `^evil.*\.com$` |
 
 ## Blacklist Types and Patterns
 
