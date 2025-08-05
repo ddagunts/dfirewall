@@ -35,7 +35,7 @@ func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 		return
 	}
 	
-	var rules []FirewallRule
+	rules := make([]FirewallRule, 0)
 	
 	for _, key := range keys {
 		// Use secure Redis key parsing with validation
