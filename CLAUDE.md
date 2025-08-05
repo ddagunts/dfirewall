@@ -292,3 +292,17 @@ Set `UPSTREAM_CONFIG` environment variable to a JSON configuration file:
 - Security features: fail closed (block on error) but log extensively
 - Web UI: graceful degradation with user-friendly error messages
 - Log collection: reconnect automatically, don't stop DNS service
+
+## Recent Security Improvements
+
+### Pattern Matching Unification
+Recent updates have unified domain pattern matching across all features:
+- **Shared Function**: `matchesDomainPattern()` in `security.go:1931-1962` provides consistent matching
+- **Wildcard Support**: `*.example.com` patterns work in both upstream routing and blacklists
+- **CNAME Security**: Fixed blacklist bypass where CNAME resolution could circumvent blocking
+- **Redis Consistency**: Redis and file-based blacklists now have identical pattern support
+
+### Domain Blacklist Security Fixes
+- **CNAME Bypass Prevention**: Domain blacklisting now uses originally requested domain, not resolved CNAME target
+- **Redis Parent Domain Support**: Redis blacklists now support parent domain blocking (e.g., `evil.com` blocks `www.evil.com`)
+- **Pattern Consistency**: Wildcard and regex patterns work consistently across Redis and file-based blacklists

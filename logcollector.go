@@ -37,17 +37,24 @@ var (
 
 // LogCollector represents an active log collection instance
 type LogCollector struct {
-	Source       *LogSource
-	Stats        *SourceStats
-	SSHClient    *ssh.Client
-	SSHSession   *ssh.Session
-	File         io.ReadCloser
-	Scanner      *bufio.Scanner
-	Watcher      *fsnotify.Watcher
-	Context      context.Context
-	Cancel       context.CancelFunc
-	Mutex        sync.RWMutex
-	LastPosition int64
+	Source            *LogSource
+	Stats             *SourceStats
+	SSHClient         *ssh.Client
+	SSHSession        *ssh.Session
+	File              io.ReadCloser
+	Scanner           *bufio.Scanner
+	Watcher           *fsnotify.Watcher
+	Context           context.Context
+	Cancel            context.CancelFunc
+	Mutex             sync.RWMutex
+	LastPosition      int64
+	CompiledPatterns  []*CompiledPattern  // Pre-compiled regex patterns for performance
+}
+
+// CompiledPattern holds a regex pattern with its compiled form
+type CompiledPattern struct {
+	Pattern  *ExtractionPattern
+	Compiled *regexp.Regexp
 }
 
 // initializeLogCollector initializes the log collection system
@@ -391,7 +398,37 @@ func createLogCollector(source *LogSource, redisClient *redis.Client) (*LogColle
 		Cancel:  cancel,
 	}
 
+	// Pre-compile regex patterns for performance optimization
+	if err := collector.compilePatterns(); err != nil {
+		return nil, fmt.Errorf("failed to compile patterns for %s: %v", source.Name, err)
+	}
+
 	return collector, nil
+}
+
+// compilePatterns pre-compiles all regex patterns for performance
+func (c *LogCollector) compilePatterns() error {
+	c.CompiledPatterns = make([]*CompiledPattern, 0, len(c.Source.Patterns))
+	
+	for _, pattern := range c.Source.Patterns {
+		if !pattern.Enabled {
+			continue
+		}
+		
+		compiled, err := regexp.Compile(pattern.Regex)
+		if err != nil {
+			log.Printf("Warning: Skipping invalid regex pattern %s: %v", pattern.Name, err)
+			continue
+		}
+		
+		c.CompiledPatterns = append(c.CompiledPatterns, &CompiledPattern{
+			Pattern:  &pattern,
+			Compiled: compiled,
+		})
+	}
+	
+	log.Printf("Compiled %d regex patterns for source %s", len(c.CompiledPatterns), c.Source.Name)
+	return nil
 }
 
 // Start starts the log collector
@@ -764,17 +801,9 @@ func (c *LogCollector) processLines() error {
 
 // processLine processes a single log line
 func (c *LogCollector) processLine(line string, redisClient *redis.Client) error {
-	for _, pattern := range c.Source.Patterns {
-		if !pattern.Enabled {
-			continue
-		}
-
-		re, err := regexp.Compile(pattern.Regex)
-		if err != nil {
-			continue // Skip invalid patterns
-		}
-
-		matches := re.FindStringSubmatch(line)
+	for _, compiledPattern := range c.CompiledPatterns {
+		pattern := compiledPattern.Pattern
+		matches := compiledPattern.Compiled.FindStringSubmatch(line)
 		if matches == nil {
 			continue
 		}

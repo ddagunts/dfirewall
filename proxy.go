@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -20,6 +21,16 @@ import (
 
 // Global configuration for TTL grace period
 var ttlGracePeriodSeconds uint32 = 90 // Default grace period of 90 seconds after DNS TTL expiration
+
+// Global DNS client pool for performance optimization
+var dnsClientPool = sync.Pool{
+	New: func() interface{} {
+		client := new(dns.Client)
+		client.Net = "udp"
+		client.Timeout = 5 * time.Second  // Reasonable timeout
+		return client
+	},
+}
 
 // inRange checks if IP is within the specified range
 func inRange(ipLow, ipHigh, ip netip.Addr) bool {
@@ -64,30 +75,9 @@ func selectUpstreamResolver(clientIP, domain, defaultUpstream string, upstreamCo
 
 // matchesZonePattern checks if a domain matches a zone pattern
 // Supports exact matches, wildcards (*.example.com), and regex patterns
+// This is now a wrapper around the shared matchesDomainPattern function for consistency
 func matchesZonePattern(domain, pattern string) bool {
-	if pattern == "" {
-		return false
-	}
-
-	// Exact match
-	if domain == pattern {
-		return true
-	}
-
-	// Wildcard pattern (*.example.com)
-	if strings.HasPrefix(pattern, "*.") {
-		suffix := pattern[2:] // Remove "*."
-		return strings.HasSuffix(domain, "."+suffix) || domain == suffix
-	}
-
-	// Try regex pattern (if it contains regex metacharacters)
-	if strings.ContainsAny(pattern, "^$()[]{}|+?\\") {
-		if matched, err := regexp.MatchString(pattern, domain); err == nil {
-			return matched
-		}
-	}
-
-	return false
+	return matchesDomainPattern(domain, pattern)
 }
 
 // Register sets up the DNS proxy and starts handling DNS requests
@@ -490,9 +480,9 @@ func Register(rt Route) error {
 			}
 		}
 
-		// Set up upstream DNS client
-		c := new(dns.Client)
-		c.Net = "udp"
+		// Get DNS client from pool for performance
+		c := dnsClientPool.Get().(*dns.Client)
+		defer dnsClientPool.Put(c)
 
 		// Handle EDNS if enabled
 		if ednsAdd == "1" || ednsAdd == "true" {
@@ -560,7 +550,13 @@ func Register(rt Route) error {
 		for _, rr := range resp.Answer {
 			if rrType, ok := rr.(*dns.A); ok {
 				resolvedIP := rrType.A.String()
-				domain := rrType.Hdr.Name
+				// SECURITY FIX: Use originally requested domain, not resolved domain from DNS answer
+				// This prevents CNAME-based blacklist bypass (e.g., www.ebay.com -> ebay.map.fastly.net)
+				domain := requestedDomain
+				if domain == "" {
+					// Fallback to resolved domain if no requested domain available
+					domain = strings.TrimSuffix(rrType.Hdr.Name, ".")
+				}
 				
 				// Clamp TTL to maximum 3600 seconds
 				originalTTL := rrType.Hdr.Ttl
@@ -675,7 +671,13 @@ func Register(rt Route) error {
 			} else if rrType, ok := rr.(*dns.AAAA); ok {
 				// Handle IPv6 records similarly
 				resolvedIPv6 := rrType.AAAA.String()
-				domain := rrType.Hdr.Name
+				// SECURITY FIX: Use originally requested domain, not resolved domain from DNS answer
+				// This prevents CNAME-based blacklist bypass (e.g., www.ebay.com -> ebay.map.fastly.net)
+				domain := requestedDomain
+				if domain == "" {
+					// Fallback to resolved domain if no requested domain available
+					domain = strings.TrimSuffix(rrType.Hdr.Name, ".")
+				}
 				
 				// Clamp TTL to maximum 3600 seconds
 				originalTTL := rrType.Hdr.Ttl
