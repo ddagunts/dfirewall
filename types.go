@@ -40,6 +40,8 @@ type ClientScriptConfig struct {
 	ExpireScript string `json:"expire_script,omitempty"`
 	// Whether to always invoke script (overrides global INVOKE_ALWAYS)
 	InvokeAlways *bool `json:"invoke_always,omitempty"`
+	// Whether to execute scripts synchronously (overrides global SYNC_SCRIPT_EXECUTION)
+	SyncExecution *bool `json:"sync_execution,omitempty"`
 	// Description for documentation purposes
 	Description string `json:"description,omitempty"`
 	// Additional environment variables to set for this client
@@ -52,10 +54,11 @@ type ScriptConfiguration struct {
 	Version string `json:"version"`
 	// Global default settings (fallback when no client-specific config matches)
 	Defaults struct {
-		InvokeScript string            `json:"invoke_script,omitempty"`
-		ExpireScript string            `json:"expire_script,omitempty"`
-		InvokeAlways bool              `json:"invoke_always,omitempty"`
-		Environment  map[string]string `json:"environment,omitempty"`
+		InvokeScript  string            `json:"invoke_script,omitempty"`
+		ExpireScript  string            `json:"expire_script,omitempty"`
+		InvokeAlways  bool              `json:"invoke_always,omitempty"`
+		SyncExecution bool              `json:"sync_execution,omitempty"`
+		Environment   map[string]string `json:"environment,omitempty"`
 	} `json:"defaults"`
 	// Per-client configurations (processed in order - first match wins)
 	Clients []ClientScriptConfig `json:"clients"`

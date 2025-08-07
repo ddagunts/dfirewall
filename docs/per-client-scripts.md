@@ -47,6 +47,7 @@ Create a JSON configuration file and set `SCRIPT_CONFIG=/path/to/config.json`:
 - **`invoke_script`**: Path to script executed when new IPs are encountered
 - **`expire_script`**: Path to script executed when Redis keys expire
 - **`invoke_always`**: Execute script for every IP encounter (not just new ones)
+- **`sync_execution`**: Execute scripts synchronously to ensure firewall rules are created before DNS response
 - **`environment`**: Environment variables passed to scripts
 
 #### Client-Specific Configuration
@@ -55,7 +56,54 @@ Create a JSON configuration file and set `SCRIPT_CONFIG=/path/to/config.json`:
 - **`invoke_script`**: Client-specific invoke script (overrides global)
 - **`expire_script`**: Client-specific expire script (overrides global)  
 - **`invoke_always`**: Client-specific invoke_always setting (overrides global)
+- **`sync_execution`**: Client-specific sync_execution setting (overrides global)
 - **`environment`**: Additional environment variables for this client
+
+## Script Execution Timing
+
+dfirewall supports both asynchronous and synchronous script execution modes to ensure reliable application connectivity:
+
+### Asynchronous Execution (Default)
+```json
+{
+  "sync_execution": false
+}
+```
+- **Behavior**: DNS response sent immediately, scripts execute in background
+- **Pros**: Fast DNS response times, no blocking
+- **Cons**: Race condition - client applications may fail to connect if they attempt connection before firewall rule exists
+- **Use case**: Environments where DNS performance is priority and applications can handle connection retries
+
+### Synchronous Execution  
+```json
+{
+  "sync_execution": true
+}
+```
+- **Behavior**: Scripts execute first, DNS response sent after completion
+- **Pros**: Firewall rules guaranteed to exist before DNS response, ensuring reliable application connectivity
+- **Cons**: Slower DNS response times (adds script execution time)
+- **Use case**: Production environments where application reliability is critical and connection failures are unacceptable
+
+### Per-Client Configuration
+```json
+{
+  "clients": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "description": "Production servers - synchronous execution for reliability",
+      "sync_execution": true
+    },
+    {
+      "client_pattern": "192.168.100.0/24", 
+      "description": "Development network - async for performance",
+      "sync_execution": false
+    }
+  ]
+}
+```
+
+**Reliability Recommendation:** Enable synchronous execution for production environments where application connection failures due to timing issues would impact service availability.
 
 ## Client Pattern Matching
 
@@ -145,10 +193,11 @@ Executed when Redis keys expire (TTL reaches zero):
   "clients": [
     {
       "client_pattern": "192.168.10.0/24",
-      "description": "Executive network - high security",
+      "description": "Executive network - high security with synchronous execution",
       "invoke_script": "/scripts/executive_strict.sh",
       "expire_script": "/scripts/executive_cleanup.sh",
       "invoke_always": true,
+      "sync_execution": true,
       "environment": {
         "SECURITY_LEVEL": "maximum",
         "AUDIT_LOG": "/var/log/executive.log",

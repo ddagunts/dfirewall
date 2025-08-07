@@ -836,7 +836,7 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 	clientConfig := findClientConfig(clientIP)
 	
 	var invokeScript, expireScript string
-	var invokeAlways bool
+	var invokeAlways, syncExecution bool
 	var environment map[string]string
 	
 	if clientConfig != nil {
@@ -846,11 +846,14 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 		if clientConfig.InvokeAlways != nil {
 			invokeAlways = *clientConfig.InvokeAlways
 		}
+		if clientConfig.SyncExecution != nil {
+			syncExecution = *clientConfig.SyncExecution
+		}
 		environment = clientConfig.Environment
 		
 		if os.Getenv("DEBUG") != "" {
-			log.Printf("Using client-specific config for %s: invoke=%s, expire=%s, always=%v", 
-				clientIP, invokeScript, expireScript, invokeAlways)
+			log.Printf("Using client-specific config for %s: invoke=%s, expire=%s, always=%v, sync=%v", 
+				clientIP, invokeScript, expireScript, invokeAlways, syncExecution)
 		}
 	} else {
 		// Use default settings
@@ -858,6 +861,7 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 			invokeScript = scriptConfig.Defaults.InvokeScript
 			expireScript = scriptConfig.Defaults.ExpireScript
 			invokeAlways = scriptConfig.Defaults.InvokeAlways
+			syncExecution = scriptConfig.Defaults.SyncExecution
 			environment = scriptConfig.Defaults.Environment
 		}
 		
@@ -870,6 +874,9 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 		}
 		if !invokeAlways {
 			invokeAlways = os.Getenv("INVOKE_ALWAYS") != ""
+		}
+		if !syncExecution {
+			syncExecution = os.Getenv("SYNC_SCRIPT_EXECUTION") != ""
 		}
 	}
 	
@@ -893,8 +900,8 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 		return
 	}
 	
-	// Execute script in background to avoid blocking DNS responses
-	go func() {
+	// Define script execution function
+	executeScriptFunc := func() {
 		// Validate inputs for security - reject if invalid
 		if err := validateForShellExecution(clientIP, "ip"); err != nil {
 			log.Printf("Script execution aborted: %v", err)
@@ -921,7 +928,9 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 		}
 		
 		if os.Getenv("DEBUG") != "" {
-			log.Printf("Executing script: %s %s %s %s %s %s", scriptPath, clientIP, resolvedIP, domain, ttl, action)
+			log.Printf("Executing script %s: %s %s %s %s %s %s", 
+				map[bool]string{true: "synchronously", false: "asynchronously"}[syncExecution],
+				scriptPath, clientIP, resolvedIP, domain, ttl, action)
 		}
 		
 		// Execute with timeout
@@ -958,7 +967,14 @@ func executeScript(clientIP, resolvedIP, domain, ttl, action string, isNewRule b
 		} else if os.Getenv("DEBUG") != "" {
 			log.Printf("Script output: %s", string(output))
 		}
-	}()
+	}
+	
+	// Execute synchronously or asynchronously based on configuration
+	if syncExecution {
+		executeScriptFunc()
+	} else {
+		go executeScriptFunc()
+	}
 }
 
 // loadUpstreamConfiguration loads upstream resolver configuration from JSON file

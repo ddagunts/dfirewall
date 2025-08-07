@@ -53,8 +53,9 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 ### Building and Testing
 
 ```bash
-# Build the Go binary
-go build -o dfirewall
+# IMPORTANT: Always use Docker Compose for all builds and tests (required for Redis integration and consistent environment)
+# Build with Docker Compose
+docker-compose up --build -d
 
 # IMPORTANT: Always run tests using Docker Compose (required for Redis integration)
 docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
@@ -63,17 +64,17 @@ docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
 # Edit docker-compose.test.yml command line to target specific tests:
 # command: ["go", "test", "-v", "-run", "TestValidationFunctionsAgainstShellInjection|TestExploitAttempts", "./..."]
 
-# Format code
-go fmt ./...
+# Format code (run inside container or use Docker)
+docker-compose exec dfirewall go fmt ./...
 
-# Vet code for issues
-go vet ./...
+# Vet code for issues (run inside container or use Docker)  
+docker-compose exec dfirewall go vet ./...
 
-# Download dependencies
-go mod download
+# Download dependencies (handled by Docker build)
+# go mod download
 
-# Tidy dependencies
-go mod tidy
+# Tidy dependencies (handle via Docker if needed)
+# go mod tidy
 ```
 
 ### Running
@@ -113,6 +114,7 @@ Optional:
 - `PORT`: Listening port (default: 53)
 - `INVOKE_SCRIPT`: Path to executable script for firewall management (global fallback)
 - `INVOKE_ALWAYS`: Execute script for every IP encounter (not just new ones, global fallback)
+- `SYNC_SCRIPT_EXECUTION`: Execute scripts synchronously to ensure firewall rules are created before DNS response (global fallback)
 - `EXPIRE_SCRIPT`: Path to executable script for cleanup when Redis keys expire (global fallback)
 - `SCRIPT_CONFIG`: Path to JSON configuration file for per-client script settings
 - `UPSTREAM_CONFIG`: Path to JSON configuration file for per-client/zone upstream DNS routing
