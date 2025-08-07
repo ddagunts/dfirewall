@@ -43,6 +43,7 @@ services:
       #- "CUSTOM_SCRIPT_CONFIG=/config/custom-script-config.json" # Enable custom script validation
       - "WEB_UI_PORT=8080" # Enable web UI for rule management
       - "INVOKE_ALWAYS=1"
+      - "SYNC_SCRIPT_EXECUTION=1" # Execute scripts synchronously for reliable connectivity
       - "HANDLE_ALL_IPS=1"
     hostname: "dfirewall"
     image: "dfirewall:latest"

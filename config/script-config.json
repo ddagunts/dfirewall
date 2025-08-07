@@ -4,6 +4,7 @@
     "invoke_script": "/scripts/invoke_linux_ipset.sh",
     "expire_script": "/scripts/expire_generic.sh",
     "invoke_always": false,
+    "sync_execution": false,
     "environment": {
       "DEFAULT_POLICY": "deny",
       "LOG_LEVEL": "info"
@@ -12,10 +13,11 @@
   "clients": [
     {
       "client_pattern": "192.168.1.0/24",
-      "description": "Corporate network - use strict firewall rules",
+      "description": "Corporate network - use strict firewall rules with synchronous execution",
       "invoke_script": "/scripts/invoke_corporate.sh",
       "expire_script": "/scripts/expire_corporate.sh",
       "invoke_always": true,
+      "sync_execution": true,
       "environment": {
         "SECURITY_LEVEL": "high",
         "AUDIT_LOG": "/var/log/corporate-firewall.log",

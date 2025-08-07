@@ -55,10 +55,29 @@ REDIS_POOL_SIZE=10            # connection pool size
 INVOKE_SCRIPT=                # path of an executable for firewall management (global fallback)
 EXPIRE_SCRIPT=                # path of an executable for cleanup when Redis keys expire (global fallback)
 INVOKE_ALWAYS=true            # execute INVOKE_SCRIPT every time an IP address is encountered (global fallback)
+SYNC_SCRIPT_EXECUTION=true    # execute scripts synchronously to ensure firewall rules are created before DNS response (global fallback)
 SCRIPT_CONFIG=                # path to JSON configuration file for per-client script settings
 ```
 
 **📖 For detailed script configuration, see:** [docs/per-client-scripts.md](docs/per-client-scripts.md)
+
+#### Script Execution Timing
+
+dfirewall supports two execution modes for firewall scripts to ensure reliable application connectivity:
+
+**Asynchronous Mode (Default):**
+- DNS response sent immediately 
+- Firewall scripts execute in background
+- Faster DNS response times
+- Risk: Client applications may fail to connect if they attempt connection before firewall rule exists
+
+**Synchronous Mode (`SYNC_SCRIPT_EXECUTION=true`):**
+- Firewall script executes first
+- DNS response sent after script completes
+- Slower DNS response times  
+- Guarantee: Firewall rules exist before client receives DNS answer, ensuring reliable application connectivity
+
+**Recommendation:** Use synchronous mode in production environments where application connection failures due to timing issues would impact service availability.
 
 ### Security Features Configuration
 ```bash
@@ -388,6 +407,7 @@ services:
       - TTL_GRACE_PERIOD_SECONDS=90
       - INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh
       - EXPIRE_SCRIPT=/scripts/expire_generic.sh
+      - SYNC_SCRIPT_EXECUTION=true
       - DEBUG=true
     volumes:
       - ./config:/config
@@ -420,6 +440,7 @@ TTL_GRACE_PERIOD_SECONDS=90
 # Scripts
 INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh
 EXPIRE_SCRIPT=/scripts/expire_generic.sh
+SYNC_SCRIPT_EXECUTION=true
 
 # Web UI
 WEB_UI_PORT=8080
