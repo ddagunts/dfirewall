@@ -44,6 +44,62 @@ func addGracePeriod(originalTTL uint32) uint32 {
 	return originalTTL + ttlGracePeriodSeconds
 }
 
+// shouldSkipFirewallRule determines if firewall rule creation should be skipped for an IP address
+// Returns true for addresses that would defeat the purpose of the firewall or are invalid
+func shouldSkipFirewallRule(ipAddr string) bool {
+	// Skip for addresses that indicate DNS resolution failure or invalid responses
+	switch ipAddr {
+	case "0.0.0.0":
+		return true
+	case "::":
+		return true
+	case "::0":
+		return true
+	}
+	
+	// Parse IP to check for other problematic ranges
+	ip := net.ParseIP(ipAddr)
+	if ip == nil {
+		return true // Invalid IP format
+	}
+	
+	// Skip for IPv4 addresses in problematic ranges
+	if ipv4 := ip.To4(); ipv4 != nil {
+		// 0.0.0.0/8 - "This" network (RFC 5735)
+		if ipv4[0] == 0 {
+			return true
+		}
+		// 127.0.0.0/8 - Loopback (RFC 5735)
+		if ipv4[0] == 127 {
+			return true
+		}
+		// 224.0.0.0/4 - Multicast (RFC 5735)
+		if ipv4[0] >= 224 && ipv4[0] <= 239 {
+			return true
+		}
+		// 240.0.0.0/4 - Reserved for future use (RFC 5735)
+		if ipv4[0] >= 240 {
+			return true
+		}
+	} else {
+		// Skip for IPv6 addresses in problematic ranges
+		// ::1 - Loopback
+		if ip.Equal(net.IPv6loopback) {
+			return true
+		}
+		// :: - Unspecified
+		if ip.Equal(net.IPv6unspecified) {
+			return true
+		}
+		// ff00::/8 - Multicast
+		if ip[0] == 0xff {
+			return true
+		}
+	}
+	
+	return false
+}
+
 // selectUpstreamResolver determines which upstream resolver to use based on client IP and domain
 // Priority: client-specific rules > zone-specific rules > default upstream
 func selectUpstreamResolver(clientIP, domain, defaultUpstream string, upstreamConfig *UpstreamConfig) string {
@@ -682,9 +738,16 @@ func Register(rt Route) error {
 					updateTrafficPattern(from, domain, resolvedIP)
 				}
 
-				// Execute script based on configuration
-				if invoke != "" || scriptConfig != nil {
-					executeScript(from, resolvedIP, domain, ttl, "ALLOW", isNewRule)
+				// Skip firewall rules for problematic IP addresses (defeats the purpose of the firewall)
+				if shouldSkipFirewallRule(resolvedIP) {
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Skipping firewall rule execution for problematic IP address: %s -> %s", domain, resolvedIP)
+					}
+				} else {
+					// Execute script based on configuration
+					if invoke != "" || scriptConfig != nil {
+						executeScript(from, resolvedIP, domain, ttl, "ALLOW", isNewRule)
+					}
 				}
 
 				// Add this record to processed answers
@@ -777,8 +840,15 @@ func Register(rt Route) error {
 					}
 				}
 
-				if invoke != "" || scriptConfig != nil {
-					executeScript(from, resolvedIPv6, domain, ttl, "ALLOW", isNewRule)
+				// Skip firewall rules for problematic IPv6 addresses (defeats the purpose of the firewall)
+				if shouldSkipFirewallRule(resolvedIPv6) {
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Skipping firewall rule execution for problematic IPv6 address: %s -> %s", domain, resolvedIPv6)
+					}
+				} else {
+					if invoke != "" || scriptConfig != nil {
+						executeScript(from, resolvedIPv6, domain, ttl, "ALLOW", isNewRule)
+					}
 				}
 
 				// Add this record to processed answers
