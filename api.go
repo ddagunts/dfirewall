@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,15 +58,33 @@ func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 			ttl = -1 // Unknown TTL
 		}
 		
-		// ASSUMPTION: Calculate expiration time based on current time + TTL
-		expiresAt := time.Now().Add(ttl)
+		// Get rule data from hash
+		ruleData, err := redisClient.HGetAll(ctx, key).Result()
+		var createdAt time.Time
+		if err == nil && len(ruleData) > 0 {
+			// Parse creation timestamp from hash data
+			if createdAtStr, exists := ruleData["created_at"]; exists {
+				if createdAtUnix, err := strconv.ParseInt(createdAtStr, 10, 64); err == nil {
+					createdAt = time.Unix(createdAtUnix, 0)
+				} else {
+					// Fallback to approximation if parsing fails
+					createdAt = time.Now().Add(-ttl)
+				}
+			} else {
+				// Fallback to approximation if field doesn't exist
+				createdAt = time.Now().Add(-ttl)
+			}
+		} else {
+			// Fallback to approximation if hash read fails
+			createdAt = time.Now().Add(-ttl)
+		}
 		
-		// QUESTION: How to determine creation time? Not stored in Redis
-		// ASSUMPTION: Use current time minus original TTL as approximation
-		createdAt := time.Now().Add(-ttl)
 		if ttl < 0 {
 			createdAt = time.Now() // Fallback for persistent keys
 		}
+		
+		// Calculate expiration time based on current time + TTL
+		expiresAt := time.Now().Add(ttl)
 		
 		rule := FirewallRule{
 			Key:        key,

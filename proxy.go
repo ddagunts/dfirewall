@@ -547,8 +547,16 @@ func Register(rt Route) error {
 		}
 
 		// Process the response and extract IPs
+		// Track processed records for consistent DNS response when HANDLE_ALL_IPS is disabled
+		var processedAnswers []dns.RR
+		var processedA, processedAAAA bool
+		
 		for _, rr := range resp.Answer {
 			if rrType, ok := rr.(*dns.A); ok {
+				// Skip additional A records when HANDLE_ALL_IPS is disabled and we already processed one
+				if handleAllIPs == "" && processedA {
+					continue
+				}
 				resolvedIP := rrType.A.String()
 				// SECURITY FIX: Use originally requested domain, not resolved domain from DNS answer
 				// This prevents CNAME-based blacklist bypass (e.g., www.ebay.com -> ebay.map.fastly.net)
@@ -642,7 +650,22 @@ func Register(rt Route) error {
 				if ttlDuration < 1*time.Second {
 					ttlDuration = 1 * time.Second
 				}
-				err = redisClient.Set(ctx, key, "allowed", ttlDuration).Err()
+				// Store rule data including creation timestamp using hash
+				if isNewRule {
+					// For new rules, set both status and creation timestamp
+					ruleData := map[string]interface{}{
+						"status":     "allowed",
+						"created_at": time.Now().Unix(), // Unix timestamp for creation time
+					}
+					err = redisClient.HMSet(ctx, key, ruleData).Err()
+				} else {
+					// For existing rules, only update status (preserve original created_at)
+					err = redisClient.HSet(ctx, key, "status", "allowed").Err()
+				}
+				if err == nil {
+					// Set TTL on the key
+					err = redisClient.Expire(ctx, key, ttlDuration).Err()
+				}
 				if err != nil {
 					log.Printf("Error storing rule in Redis: %v", err)
 				} else {
@@ -664,11 +687,14 @@ func Register(rt Route) error {
 					executeScript(from, resolvedIP, domain, ttl, "ALLOW", isNewRule)
 				}
 
-				// Only process first A record unless HANDLE_ALL_IPS is set
-				if handleAllIPs == "" {
-					break
-				}
+				// Add this record to processed answers
+				processedAnswers = append(processedAnswers, rr)
+				processedA = true
 			} else if rrType, ok := rr.(*dns.AAAA); ok {
+				// Skip additional AAAA records when HANDLE_ALL_IPS is disabled and we already processed one
+				if handleAllIPs == "" && processedAAAA {
+					continue
+				}
 				// Handle IPv6 records similarly
 				resolvedIPv6 := rrType.AAAA.String()
 				// SECURITY FIX: Use originally requested domain, not resolved domain from DNS answer
@@ -724,7 +750,22 @@ func Register(rt Route) error {
 				if ttlDuration < 1*time.Second {
 					ttlDuration = 1 * time.Second
 				}
-				err = redisClient.Set(ctx, key, "allowed", ttlDuration).Err()
+				// Store rule data including creation timestamp using hash
+				if isNewRule {
+					// For new rules, set both status and creation timestamp
+					ruleData := map[string]interface{}{
+						"status":     "allowed",
+						"created_at": time.Now().Unix(), // Unix timestamp for creation time
+					}
+					err = redisClient.HMSet(ctx, key, ruleData).Err()
+				} else {
+					// For existing rules, only update status (preserve original created_at)
+					err = redisClient.HSet(ctx, key, "status", "allowed").Err()
+				}
+				if err == nil {
+					// Set TTL on the key
+					err = redisClient.Expire(ctx, key, ttlDuration).Err()
+				}
 				if err != nil {
 					log.Printf("Error storing IPv6 rule in Redis: %v", err)
 				} else {
@@ -740,9 +781,21 @@ func Register(rt Route) error {
 					executeScript(from, resolvedIPv6, domain, ttl, "ALLOW", isNewRule)
 				}
 
-				if handleAllIPs == "" {
-					break
-				}
+				// Add this record to processed answers
+				processedAnswers = append(processedAnswers, rr)
+				processedAAAA = true
+			} else {
+				// For non-A/AAAA records (CNAME, NS, etc.), always include them
+				processedAnswers = append(processedAnswers, rr)
+			}
+		}
+
+		// CONSISTENCY FIX: When HANDLE_ALL_IPS is disabled, only return processed records
+		// This ensures the DNS response matches the IPs for which firewall rules were created
+		if handleAllIPs == "" && len(processedAnswers) > 0 {
+			resp.Answer = processedAnswers
+			if os.Getenv("DEBUG") != "" {
+				log.Printf("Filtered DNS response to %d processed records (HANDLE_ALL_IPS disabled)", len(processedAnswers))
 			}
 		}
 

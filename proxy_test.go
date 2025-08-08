@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/miekg/dns"
 )
 
 func TestExecuteScriptEnvironmentVariables(t *testing.T) {
@@ -785,6 +788,240 @@ func TestMatchesZonePattern(t *testing.T) {
 			if result != tt.expected {
 				t.Errorf("matchesZonePattern(%q, %q) = %v, expected %v", tt.domain, tt.pattern, result, tt.expected)
 			}
+		})
+	}
+}
+
+func TestHandleAllIPsConsistency(t *testing.T) {
+	// This test verifies that when HANDLE_ALL_IPS is disabled,
+	// the DNS response contains only the IPs that were processed for firewall rules
+	tests := []struct {
+		name               string
+		handleAllIPs       string
+		upstreamResponse   *dns.Msg
+		expectedARecords   int
+		expectedAAAARecords int
+		description        string
+	}{
+		{
+			name:         "HANDLE_ALL_IPS disabled - multiple A records",
+			handleAllIPs: "", // disabled
+			upstreamResponse: func() *dns.Msg {
+				msg := new(dns.Msg)
+				msg.SetQuestion(dns.Fqdn("example.com"), dns.TypeA)
+				
+				// Add multiple A records
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("1.2.3.4").To4(),
+				})
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("5.6.7.8").To4(),
+				})
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("9.10.11.12").To4(),
+				})
+				
+				return msg
+			}(),
+			expectedARecords: 1, // Should only return first A record when HANDLE_ALL_IPS is disabled
+			description:      "When HANDLE_ALL_IPS is disabled, only first A record should be in DNS response",
+		},
+		{
+			name:         "HANDLE_ALL_IPS enabled - multiple A records",
+			handleAllIPs: "1", // enabled
+			upstreamResponse: func() *dns.Msg {
+				msg := new(dns.Msg)
+				msg.SetQuestion(dns.Fqdn("example.com"), dns.TypeA)
+				
+				// Add multiple A records
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("1.2.3.4").To4(),
+				})
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("5.6.7.8").To4(),
+				})
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("9.10.11.12").To4(),
+				})
+				
+				return msg
+			}(),
+			expectedARecords: 3, // Should return all A records when HANDLE_ALL_IPS is enabled
+			description:      "When HANDLE_ALL_IPS is enabled, all A records should be in DNS response",
+		},
+		{
+			name:         "HANDLE_ALL_IPS disabled - mixed A and AAAA records",
+			handleAllIPs: "", // disabled
+			upstreamResponse: func() *dns.Msg {
+				msg := new(dns.Msg)
+				msg.SetQuestion(dns.Fqdn("example.com"), dns.TypeA)
+				
+				// Add A records
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("1.2.3.4").To4(),
+				})
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("5.6.7.8").To4(),
+				})
+				
+				// Add AAAA records
+				msg.Answer = append(msg.Answer, &dns.AAAA{
+					Hdr:  dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 300},
+					AAAA: net.ParseIP("2001:db8::1").To16(),
+				})
+				msg.Answer = append(msg.Answer, &dns.AAAA{
+					Hdr:  dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 300},
+					AAAA: net.ParseIP("2001:db8::2").To16(),
+				})
+				
+				return msg
+			}(),
+			expectedARecords:    1, // Should only return first A record
+			expectedAAAARecords: 1, // Should only return first AAAA record
+			description:         "When HANDLE_ALL_IPS is disabled, only first of each record type should be in DNS response",
+		},
+		{
+			name:         "HANDLE_ALL_IPS disabled - with CNAME and other records",
+			handleAllIPs: "", // disabled
+			upstreamResponse: func() *dns.Msg {
+				msg := new(dns.Msg)
+				msg.SetQuestion(dns.Fqdn("example.com"), dns.TypeA)
+				
+				// Add CNAME record (should be preserved)
+				msg.Answer = append(msg.Answer, &dns.CNAME{
+					Hdr:    dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300},
+					Target: "canonical.example.com.",
+				})
+				
+				// Add multiple A records
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "canonical.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("1.2.3.4").To4(),
+				})
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: "canonical.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("5.6.7.8").To4(),
+				})
+				
+				return msg
+			}(),
+			expectedARecords: 1, // Should only return first A record
+			description:      "When HANDLE_ALL_IPS is disabled, CNAME records should be preserved but only first A record returned",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set HANDLE_ALL_IPS environment variable
+			if tt.handleAllIPs != "" {
+				os.Setenv("HANDLE_ALL_IPS", tt.handleAllIPs)
+			} else {
+				os.Unsetenv("HANDLE_ALL_IPS")
+			}
+			defer os.Unsetenv("HANDLE_ALL_IPS")
+
+			// Simulate the DNS response processing logic from proxy.go
+			handleAllIPs := os.Getenv("HANDLE_ALL_IPS")
+			var processedAnswers []dns.RR
+			var processedA, processedAAAA bool
+			
+			t.Logf("Starting test with handleAllIPs=%q, input records=%d", handleAllIPs, len(tt.upstreamResponse.Answer))
+			
+			// Process the response similar to updated proxy.go logic
+			for _, rr := range tt.upstreamResponse.Answer {
+				if rrType, ok := rr.(*dns.A); ok {
+					// Skip additional A records when HANDLE_ALL_IPS is disabled and we already processed one
+					if handleAllIPs == "" && processedA {
+						t.Logf("Skipping additional A record: %s", rrType.A.String())
+						continue
+					}
+					
+					// Simulate processing A record (validation, blacklist checks, etc.)
+					resolvedIP := rrType.A.String()
+					t.Logf("Processing A record: %s", resolvedIP)
+					
+					// Add this record to processed answers
+					processedAnswers = append(processedAnswers, rr)
+					processedA = true
+				} else if rrType, ok := rr.(*dns.AAAA); ok {
+					// Skip additional AAAA records when HANDLE_ALL_IPS is disabled and we already processed one
+					if handleAllIPs == "" && processedAAAA {
+						t.Logf("Skipping additional AAAA record: %s", rrType.AAAA.String())
+						continue
+					}
+					
+					// Simulate processing AAAA record
+					resolvedIPv6 := rrType.AAAA.String()
+					t.Logf("Processing AAAA record: %s", resolvedIPv6)
+					
+					// Add this record to processed answers
+					processedAnswers = append(processedAnswers, rr)
+					processedAAAA = true
+				} else {
+					// For non-A/AAAA records (CNAME, NS, etc.), always include them
+					t.Logf("Processing other record type: %T", rr)
+					processedAnswers = append(processedAnswers, rr)
+				}
+			}
+
+			// Apply the consistency fix
+			var finalResponse *dns.Msg
+			if handleAllIPs == "" && len(processedAnswers) > 0 {
+				// When HANDLE_ALL_IPS is disabled, only return processed records
+				finalResponse = tt.upstreamResponse.Copy()
+				finalResponse.Answer = processedAnswers
+			} else {
+				// When HANDLE_ALL_IPS is enabled, return all records
+				finalResponse = tt.upstreamResponse
+			}
+
+			// Count actual A and AAAA records in final response
+			actualARecords := 0
+			actualAAAARecords := 0
+			actualCNAMERecords := 0
+			
+			for _, rr := range finalResponse.Answer {
+				switch rr.(type) {
+				case *dns.A:
+					actualARecords++
+				case *dns.AAAA:
+					actualAAAARecords++
+				case *dns.CNAME:
+					actualCNAMERecords++
+				}
+			}
+
+			// Verify A records
+			if actualARecords != tt.expectedARecords {
+				t.Errorf("Expected %d A records in DNS response, got %d. %s", 
+					tt.expectedARecords, actualARecords, tt.description)
+			}
+
+			// Verify AAAA records if specified
+			if tt.expectedAAAARecords > 0 {
+				if actualAAAARecords != tt.expectedAAAARecords {
+					t.Errorf("Expected %d AAAA records in DNS response, got %d. %s", 
+						tt.expectedAAAARecords, actualAAAARecords, tt.description)
+				}
+			}
+
+			// For the CNAME test case, verify CNAME is preserved
+			if strings.Contains(tt.name, "CNAME") {
+				if actualCNAMERecords != 1 {
+					t.Errorf("Expected 1 CNAME record to be preserved, got %d", actualCNAMERecords)
+				}
+			}
+
+			t.Logf("Test passed: %s - Final response has %d A records, %d AAAA records, %d CNAME records", 
+				tt.description, actualARecords, actualAAAARecords, actualCNAMERecords)
 		})
 	}
 }

@@ -214,6 +214,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                     <th>Resolved IP</th>
                     <th>Domain</th>
                     <th>TTL (seconds)</th>
+                    <th>Created At</th>
                     <th>Expires At</th>
                     <th>Actions</th>
                 </tr>
@@ -307,7 +308,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                 if (rules.length === 0) {
                     // Show a message when no rules exist
                     const row = document.createElement('tr');
-                    row.innerHTML = '<td colspan="6" style="text-align: center; color: #666; font-style: italic; padding: 40px;">' +
+                    row.innerHTML = '<td colspan="7" style="text-align: center; color: #666; font-style: italic; padding: 40px;">' +
                         'No firewall rules found. Rules will appear here after DNS queries are processed through dfirewall.' +
                         '</td>';
                     tbody.appendChild(row);
@@ -319,6 +320,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                             '<td>' + rule.resolved_ip + '</td>' +
                             '<td class="domain">' + rule.domain + '</td>' +
                             '<td class="ttl">' + rule.ttl + '</td>' +
+                            '<td>' + new Date(rule.created_at).toLocaleString() + '</td>' +
                             '<td>' + new Date(rule.expires_at).toLocaleString() + '</td>' +
                             '<td>' +
                                 '<button class="delete-btn" onclick="deleteRule(\'' + rule.key + '\')">Delete</button>' +

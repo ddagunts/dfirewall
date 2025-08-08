@@ -883,8 +883,30 @@ func (c *LogCollector) processExtractedData(entry *LogEntry, redisClient *redis.
 		// Store in Redis with TTL
 		key := fmt.Sprintf("rules:%s|%s|log:%s", clientIP, ip, entry.Source)
 		
+		// Check if this is a new rule
+		exists, err := redisClient.Exists(ctx, key).Result()
+		if err != nil {
+			log.Printf("Error checking Redis key existence: %v", err)
+		}
+		isNewRule := exists == 0
+		
 		ttlDuration := time.Duration(ttl) * time.Second
-		err := redisClient.Set(ctx, key, "allowed", ttlDuration).Err()
+		// Store rule data including creation timestamp using hash
+		if isNewRule {
+			// For new rules, set both status and creation timestamp
+			ruleData := map[string]interface{}{
+				"status":     "allowed",
+				"created_at": time.Now().Unix(), // Unix timestamp for creation time
+			}
+			err = redisClient.HMSet(ctx, key, ruleData).Err()
+		} else {
+			// For existing rules, only update status (preserve original created_at)
+			err = redisClient.HSet(ctx, key, "status", "allowed").Err()
+		}
+		if err == nil {
+			// Set TTL on the key
+			err = redisClient.Expire(ctx, key, ttlDuration).Err()
+		}
 		if err != nil {
 			log.Printf("Error storing log-extracted IP rule in Redis: %v", err)
 			continue
@@ -906,8 +928,30 @@ func (c *LogCollector) processExtractedData(entry *LogEntry, redisClient *redis.
 		// For domains, we create a placeholder rule since we don't have the resolved IP
 		key := fmt.Sprintf("rules:%s|0.0.0.0|%s", clientIP, domain)
 		
+		// Check if this is a new rule
+		exists, err := redisClient.Exists(ctx, key).Result()
+		if err != nil {
+			log.Printf("Error checking Redis key existence: %v", err)
+		}
+		isNewRule := exists == 0
+		
 		ttlDuration := time.Duration(ttl) * time.Second
-		err := redisClient.Set(ctx, key, "allowed", ttlDuration).Err()
+		// Store rule data including creation timestamp using hash
+		if isNewRule {
+			// For new rules, set both status and creation timestamp
+			ruleData := map[string]interface{}{
+				"status":     "allowed",
+				"created_at": time.Now().Unix(), // Unix timestamp for creation time
+			}
+			err = redisClient.HMSet(ctx, key, ruleData).Err()
+		} else {
+			// For existing rules, only update status (preserve original created_at)
+			err = redisClient.HSet(ctx, key, "status", "allowed").Err()
+		}
+		if err == nil {
+			// Set TTL on the key
+			err = redisClient.Expire(ctx, key, ttlDuration).Err()
+		}
 		if err != nil {
 			log.Printf("Error storing log-extracted domain rule in Redis: %v", err)
 			continue
