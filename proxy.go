@@ -854,8 +854,13 @@ func Register(rt Route) error {
 				// Add this record to processed answers
 				processedAnswers = append(processedAnswers, rr)
 				processedAAAA = true
+			} else if _, ok := rr.(*dns.CNAME); ok {
+				// Only include CNAME records if no A or AAAA records have been processed
+				if !processedA && !processedAAAA {
+					processedAnswers = append(processedAnswers, rr)
+				}
 			} else {
-				// For non-A/AAAA records (CNAME, NS, etc.), always include them
+				// For other non-A/AAAA records (NS, PTR, etc.), always include them
 				processedAnswers = append(processedAnswers, rr)
 			}
 		}
