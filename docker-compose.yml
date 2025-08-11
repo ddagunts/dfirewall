@@ -27,9 +27,10 @@ services:
       - "UPSTREAM=1.1.1.1:53"
       - "REDIS=redis://127.0.0.1:6379"
       #- "ENABLE_EDNS=1" # needs fixing
-      #- "DEBUG=1"
+      - "DEBUG=1"
       - "INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh"
       - "INVOKE_ALWAYS=1"
+      - "ENABLE_IPV6=1"  # Enable IPv6 support
     hostname: "dfirewall"
     image: "dfirewall:latest"
     user: root

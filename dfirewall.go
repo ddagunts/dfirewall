@@ -82,6 +82,24 @@ func main() {
 		}
 	}()
 
+	enableIPv6 := os.Getenv("ENABLE_IPV6")
+	if enableIPv6 != "" {
+		log.Printf("IPv6 support enabled")
+		go func() {
+			srv := &dns.Server{Addr: "[::]:" + strconv.Itoa(port), Net: "udp6"}
+			if err := srv.ListenAndServe(); err != nil {
+				log.Printf("Failed to set IPv6 UDP listener: %s", err.Error())
+			}
+		}()
+
+		go func() {
+			srv := &dns.Server{Addr: "[::]:" + strconv.Itoa(port), Net: "tcp6"}
+			if err := srv.ListenAndServe(); err != nil {
+				log.Printf("Failed to set IPv6 TCP listener: %s", err.Error())
+			}
+		}()
+	}
+
 	log.Printf("dfirewall started")
 
 	sig := make(chan os.Signal)

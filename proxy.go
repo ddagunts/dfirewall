@@ -60,13 +60,26 @@ func parseClientTTLConfig() *ClientTTLConfig {
 			key := parts[0]
 			value := parts[1]
 			
-			// Extract network from key (TTL_PAD_SECONDS_192_168_1_0_24 -> 192.168.1.0/24)
+			// Extract network from key 
+			// IPv4: TTL_PAD_SECONDS_192_168_1_0_24 -> 192.168.1.0/24
+			// IPv6: TTL_PAD_SECONDS_2001_db8_1__64 -> 2001:db8:1::/64
 			networkPart := strings.TrimPrefix(key, "TTL_PAD_SECONDS_")
-			cidr := strings.ReplaceAll(networkPart, "_", ".")
-			// Replace the last dot with a slash for CIDR notation
-			lastDot := strings.LastIndex(cidr, ".")
-			if lastDot > 0 {
-				cidr = cidr[:lastDot] + "/" + cidr[lastDot+1:]
+			var cidr string
+			
+			if strings.Contains(networkPart, "__") {
+				// IPv6 format: 2001_db8_1__64 -> 2001:db8:1::/64
+				parts := strings.Split(networkPart, "__")
+				if len(parts) == 2 {
+					ipv6Part := strings.ReplaceAll(parts[0], "_", ":")
+					cidr = ipv6Part + "::" + "/" + parts[1]
+				}
+			} else {
+				// IPv4 format: 192_168_1_0_24 -> 192.168.1.0/24
+				cidr = strings.ReplaceAll(networkPart, "_", ".")
+				lastDot := strings.LastIndex(cidr, ".")
+				if lastDot > 0 {
+					cidr = cidr[:lastDot] + "/" + cidr[lastDot+1:]
+				}
 			}
 			
 			if _, network, err := net.ParseCIDR(cidr); err == nil {
@@ -187,16 +200,33 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 			o.Hdr.Rrtype = dns.TypeOPT
 			e := new(dns.EDNS0_SUBNET)
 			e.Code = dns.EDNS0SUBNET
-			e.Family = 1         // 1 for IPv4 source address, 2 for IPv6
-			e.SourceNetmask = 32 // 32 for IPV4, 128 for IPv6
+			
+			clientIP := net.ParseIP(from)
+			if clientIP.To4() != nil {
+				// IPv4 address
+				e.Family = 1
+				e.SourceNetmask = 32
+				e.Address = clientIP.To4()
+			} else if clientIP.To16() != nil {
+				// IPv6 address
+				e.Family = 2
+				e.SourceNetmask = 128
+				e.Address = clientIP.To16()
+			} else {
+				// Invalid IP, skip EDNS
+				if os.Getenv("DEBUG") != "" {
+					log.Printf("Invalid client IP for EDNS: %s", from)
+				}
+				goto skipEDNS
+			}
+			
 			e.SourceScope = 0
-			e.Address = net.ParseIP(from).To4() // for IPv4
-			// e.Address = net.ParseIP("2001:7b8:32a::2") // for IPV6
 			o.Option = append(o.Option, e)
 			if os.Getenv("DEBUG") != "" {
 				log.Printf("EDNS in Request %s:\n", r.Extra)
 			}
 			r.Extra = append(r.Extra, o)
+			skipEDNS:
 		}
 		dnsClient := &dns.Client{Net: "udp"}
 		a, _, _ := dnsClient.Exchange(r, upstream)
@@ -210,15 +240,19 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 		var numAnswers = len(a.Answer)
 
 		var ipAddress, _ = netip.ParseAddr("127.0.0.1")
-		var loStart, _ = netip.ParseAddr("127.0.0.0")
-		var loEnd, _ = netip.ParseAddr("127.255.255.255")
-		var openRange, _ = netip.ParseAddr("0.0.0.0")
+		var loStartV4, _ = netip.ParseAddr("127.0.0.0")
+		var loEndV4, _ = netip.ParseAddr("127.255.255.255")
+		var loV6, _ = netip.ParseAddr("::1")
+		var openRangeV4, _ = netip.ParseAddr("0.0.0.0")
+		var openRangeV6, _ = netip.ParseAddr("::")
 		var padTtl uint32 = 0
+		var recordType string = ""
 
-		var recordA bool = false
+		var recordFound bool = false
 		for i := range numAnswers {
 			if arec, ok := a.Answer[i].(*dns.A); ok {
-				recordA = true
+				recordFound = true
+				recordType = "A"
 				// padTtl is used in Redis TTL and in invoked scripts,
 				// while ttl is used in client response
 				ttl := a.Answer[i].Header().Ttl
@@ -232,21 +266,48 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 				padTtl = ttl + uint32(clientTTLPad)
 
 				// respond with all records prior to first A record, and first A record
-				// TODO: add option to handle all IPs
 				ipAddress, _ = netip.ParseAddr(arec.A.String())
+				A := a.Answer[0 : i+1]
+				a.Answer = A
+				break
+			} else if aaaarec, ok := a.Answer[i].(*dns.AAAA); ok {
+				recordFound = true
+				recordType = "AAAA"
+				// padTtl is used in Redis TTL and in invoked scripts,
+				// while ttl is used in client response
+				ttl := a.Answer[i].Header().Ttl
+				// clamp TTL at 1 hour for client response
+				if ttl > 3600 {
+					ttl = 3600
+					a.Answer[i].Header().Ttl = 3600 // to the client as well
+				}
+				// pad TTL with per-client configured value (after clamping)
+				clientTTLPad := ttlConfig.getTTLPadding(from)
+				padTtl = ttl + uint32(clientTTLPad)
+
+				// respond with all records prior to first AAAA record, and first AAAA record
+				ipAddress, _ = netip.ParseAddr(aaaarec.AAAA.String())
 				A := a.Answer[0 : i+1]
 				a.Answer = A
 				break
 			}
 		}
 
-		// only target A records
-		if recordA {
-			if !(inRange(loStart, loEnd, ipAddress) || ipAddress == openRange) {
+		// target both A and AAAA records
+		if recordFound {
+			// Check if IP should be excluded (localhost ranges and null routes)
+			var shouldExclude bool
+			if ipAddress.Is4() {
+				shouldExclude = inRange(loStartV4, loEndV4, ipAddress) || ipAddress == openRangeV4
+			} else if ipAddress.Is6() {
+				shouldExclude = ipAddress == loV6 || ipAddress == openRangeV6
+			}
+			
+			if !shouldExclude {
 				newTtl := time.Duration(padTtl) * time.Second
 				newTtlS := strconv.FormatFloat(newTtl.Seconds(), 'f', -1, 64)
 				domain := r.Question[0].Name
-				key := "rules|" + from + "|" + ipAddress.String() + "|" + domain
+				key := "rules|" + from + "|" + ipAddress.String() + "|" + domain + "|" + recordType
 
 				// Validate inputs before passing to script
 				if net.ParseIP(from) == nil {
@@ -310,7 +371,8 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 								"CLIENT_IP="+from,
 								"RESOLVED_IP="+ipAddress.String(),
 								"DOMAIN="+domain,
-								"TTL="+newTtlS)
+								"TTL="+newTtlS,
+								"RECORD_TYPE="+recordType)
 							output, err := cmd.CombinedOutput()
 							if err != nil {
 								if os.Getenv("DEBUG") != "" {
@@ -336,7 +398,8 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 								"CLIENT_IP="+from,
 								"RESOLVED_IP="+ipAddress.String(),
 								"DOMAIN="+domain,
-								"TTL="+newTtlS)
+								"TTL="+newTtlS,
+								"RECORD_TYPE="+recordType)
 							output, err := cmd.CombinedOutput()
 							if err != nil {
 								if os.Getenv("DEBUG") != "" {
