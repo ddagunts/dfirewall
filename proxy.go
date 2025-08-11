@@ -213,6 +213,9 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 				o := new(dns.OPT)
 				o.Hdr.Name = "."
 				o.Hdr.Rrtype = dns.TypeOPT
+				o.Hdr.Class = dns.DefaultMsgSize // Set UDP payload size
+				o.Hdr.Ttl = 0 // Set extended RCODE and flags to 0
+				
 				e := new(dns.EDNS0_SUBNET)
 				e.Code = dns.EDNS0SUBNET
 				
@@ -220,12 +223,18 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 					// IPv4 address - use /24 netmask for better compatibility
 					e.Family = 1
 					e.SourceNetmask = 24
-					e.Address = clientIP.To4().Mask(net.CIDRMask(24, 32))
+					e.SourceScope = 0
+					// Apply mask to the client IP
+					maskedIP := clientIP.To4().Mask(net.CIDRMask(24, 32))
+					e.Address = maskedIP
 				} else if clientIP.To16() != nil {
 					// IPv6 address - use /64 netmask for better compatibility
 					e.Family = 2
 					e.SourceNetmask = 64
-					e.Address = clientIP.To16().Mask(net.CIDRMask(64, 128))
+					e.SourceScope = 0
+					// Apply mask to the client IP
+					maskedIP := clientIP.To16().Mask(net.CIDRMask(64, 128))
+					e.Address = maskedIP
 				} else {
 					// Skip EDNS if IP parsing fails
 					if os.Getenv("DEBUG") != "" {
@@ -234,10 +243,9 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 					goto skipEDNS
 				}
 				
-				e.SourceScope = 0
 				o.Option = append(o.Option, e)
 				if os.Getenv("DEBUG") != "" {
-					log.Printf("Adding EDNS subnet for client %s", from)
+					log.Printf("Adding EDNS subnet for client %s (masked: %s)", from, e.Address.String())
 				}
 				r.Extra = append(r.Extra, o)
 			} else {
@@ -252,10 +260,20 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 			}
 		}
 		dnsClient := &dns.Client{Net: "udp"}
-		a, _, _ := dnsClient.Exchange(r, upstream)
-		//if err != nil {
-		//	return err
-		//}
+		a, _, err := dnsClient.Exchange(r, upstream)
+		
+		// If we get a truncated response, retry with TCP
+		if a != nil && a.Truncated {
+			if os.Getenv("DEBUG") != "" {
+				log.Printf("Received truncated response from upstream, retrying with TCP")
+			}
+			tcpClient := &dns.Client{Net: "tcp"}
+			a, _, err = tcpClient.Exchange(r, upstream)
+		}
+		if err != nil {
+			log.Printf("DNS exchange error: %v", err)
+			return
+		}
 		if os.Getenv("DEBUG") != "" {
 			log.Printf("Response from upstream %s:\n%s\n", upstream, a)
 		}

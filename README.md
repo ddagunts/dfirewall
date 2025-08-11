@@ -31,6 +31,16 @@ ENABLE_IPV6=                # set to any value to enable IPv6 support
 DEBUG=                      # set to any value to enable verbose logging
 INVOKE_ALWAYS=              # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered, even if already present in Redis
 ```
+
+## TTL Padding Configuration
+
+TTL padding extends firewall rule expiration beyond DNS record TTL, providing additional time for clients to access resolved IP addresses.
+
+```
+TTL_PAD_SECONDS_DEFAULT=60                 # Default padding for all clients (default: 30)
+TTL_PAD_SECONDS_192_168_1_0_24=120         # IPv4: 192.168.1.0/24 gets 120 seconds
+TTL_PAD_SECONDS_2001_db8_1__64=240         # IPv6: 2001:db8:1::/64 gets 240 seconds
+```
 # Setup on Linux
 
 Start with a minimal Debian install
