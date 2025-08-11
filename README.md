@@ -1,28 +1,35 @@
 # dfirewall
 
-dns firewall, or dynamic firewall.
+DNS firewall, or dynamic firewall.
 
 `note: this is very experimental, don't use anywhere resembling production`
 
 The intent of this software is to (relatively) painlessly assist in implementing a "default deny" egress network policy at the edge with minimal impact to legitimate clients.
 
-This is a DNS proxy intended to be placed in front of your DNS resolvers/forwarders (Pi-hole, etc).  It allows to keep track of network activity by monitoring DNS requests and responses ( IP addresses and TTLs ) through reliance on Redis and execution of scripts.
-It allows to create an IP firewall with the following features:
- - Block outgoing connections by default
- - Force clients to perform their DNS lookups through our server (or stay blocked)
- - Allow clients outbound access to IPs resolved, with timed expiration of rules
- - Turns any DNS block into a firewall block
+This is a DNS proxy intended to be placed in front of your DNS resolvers/forwarders (Pi-hole, etc). It monitors DNS requests and responses (IP addresses and TTLs) through Redis storage and script execution.
+
+## Key Features
+- **Default deny egress policy** - Block outgoing connections by default
+- **DNS-driven firewall rules** - Force clients to perform DNS lookups through the server to gain access
+- **Time-limited access** - Allow clients outbound access to resolved IPs with automatic expiration based on TTL
+- **Web UI dashboard** - View and monitor firewall rules through a web interface (port 8080)
+- **IPv6 support** - Optional IPv6 DNS resolution and firewall rules
+- **Redis integration** - Persistent storage of rules and client states
+- **Script execution** - Execute custom scripts when new IP addresses are resolved
 
 # Configuration
-Configuration is handled through environmental variables.  The following variables are available (variables which are unset are OPTIONAL):
+Configuration is handled through environmental variables. The following variables are available (variables which are unset are OPTIONAL):
+
 ```
-PORT=                        # listening port
-UPSTREAM=8.8.8.8:53          # upstream DNS resolver host and port (REQUIRED)
+PORT=53                      # DNS listening port (default: 53)
+WEB_PORT=8080               # Web UI port (default: 8080)
+UPSTREAM=8.8.8.8:53         # upstream DNS resolver host and port (REQUIRED)
 REDIS=redis://127.0.0.1:6379 # location of Redis (REQUIRED)
-INVOKE_SCRIPT=               # path of an executable for "dfirewall" to exec when it encounters a new IP address
-ENABLE_EDNS=                 # set to any value to enable adding requesting client IP to EDNS record (broken at this time)
-DEBUG=                       # set to any value to enable verbose logging
-INVOKE_ALWAYS=               # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered, even if already present in Redis
+INVOKE_SCRIPT=              # path of an executable for "dfirewall" to exec when it encounters a new IP address
+ENABLE_EDNS=                # set to any value to enable adding requesting client IP to EDNS record (broken at this time)
+ENABLE_IPV6=                # set to any value to enable IPv6 support
+DEBUG=                      # set to any value to enable verbose logging
+INVOKE_ALWAYS=              # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered, even if already present in Redis
 ```
 # Setup on Linux
 
@@ -159,6 +166,8 @@ Now your Debian machine should be a router
 # docker-compose up -d
 ```
 
+The Web UI will be available at http://localhost:8080 to view and monitor firewall rules.
+
 # Testing
 Connect a **new** client to the LAN, (or otherwise ensure clean DNS cache on the client), open some app to generate network traffic.  You should see some logs from dfirewall container.
 ```
@@ -260,14 +269,31 @@ COMMIT
 ```
 As configured above, the firewall doesn't reject traffic from a client **until** at least one DNS request is made by the client.
 
-# ToDo
+# Current Status
+
+## Implemented Features
+- ✅ Basic DNS proxy with Redis integration
+- ✅ Web UI dashboard for viewing firewall rules
+- ✅ IPv6 support (DNS and firewall rules)
+- ✅ Docker containerization with health checks
+- ✅ Configurable web interface port
+- ✅ Time-based rule expiration based on DNS TTL
+- ✅ Script execution on new IP resolution
+
+## ToDo
 - fix EDNS handling
-- add support for handling all IPs in a response (rather than selecting first IP only)
-- add AAAA records (IPv6 support)
+- add support for handling all IPs in a response (rather than selecting first IP only)  
 - add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)
-- add UI for viewing rules
+- ~~add UI for viewing rules~~ ✅ **COMPLETED**
 - add better configuration options (invoke custom script(s) per client (if exist), etc)
 - add support for checking IP and/or domain against blacklist in Redis (or file)
 - add support for checking IP and/or domain against common reputation checkers
 - add support for checking IP and/or domain by executing user-provided pass/fail script
+- add API endpoints for rule management
 - AI integration :D
+
+## Recent Updates
+- Added comprehensive Web UI with client and rule viewing
+- Implemented IPv6 DNS resolution support
+- Enhanced Redis key structure with record type tracking
+- Improved Docker health checks and service dependencies
