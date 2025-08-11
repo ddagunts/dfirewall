@@ -31,6 +31,19 @@ func inRange(ipLow, ipHigh, ip netip.Addr) bool {
 	return ipLow.Compare(ip) <= 0 && ipHigh.Compare(ip) > 0
 }
 
+func hasEDNSSubnet(r *dns.Msg) bool {
+	for _, rr := range r.Extra {
+		if opt, ok := rr.(*dns.OPT); ok {
+			for _, option := range opt.Option {
+				if _, ok := option.(*dns.EDNS0_SUBNET); ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func parseClientTTLConfig() *ClientTTLConfig {
 	config := &ClientTTLConfig{
 		networks: make(map[*net.IPNet]int),
@@ -193,40 +206,50 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 		// Set EDNS so that Pi-hole (or whatever upstream) receives the real client IP
 		// If you already have EDNS records added, you can set environmental variable
 		// DISABLE_EDNS to any value to disable this.
-		// Don't enable!!, this currently breaks many requests
-		if ednsAdd != "" {
-			o := new(dns.OPT)
-			o.Hdr.Name = "."
-			o.Hdr.Rrtype = dns.TypeOPT
-			e := new(dns.EDNS0_SUBNET)
-			e.Code = dns.EDNS0SUBNET
-			
+		// Only add EDNS subnet if one doesn't already exist in the request
+		if ednsAdd != "" && !hasEDNSSubnet(r) {
 			clientIP := net.ParseIP(from)
-			if clientIP.To4() != nil {
-				// IPv4 address
-				e.Family = 1
-				e.SourceNetmask = 32
-				e.Address = clientIP.To4()
-			} else if clientIP.To16() != nil {
-				// IPv6 address
-				e.Family = 2
-				e.SourceNetmask = 128
-				e.Address = clientIP.To16()
-			} else {
-				// Invalid IP, skip EDNS
-				if os.Getenv("DEBUG") != "" {
-					log.Printf("Invalid client IP for EDNS: %s", from)
+			if clientIP != nil {
+				o := new(dns.OPT)
+				o.Hdr.Name = "."
+				o.Hdr.Rrtype = dns.TypeOPT
+				e := new(dns.EDNS0_SUBNET)
+				e.Code = dns.EDNS0SUBNET
+				
+				if clientIP.To4() != nil {
+					// IPv4 address - use /24 netmask for better compatibility
+					e.Family = 1
+					e.SourceNetmask = 24
+					e.Address = clientIP.To4().Mask(net.CIDRMask(24, 32))
+				} else if clientIP.To16() != nil {
+					// IPv6 address - use /64 netmask for better compatibility
+					e.Family = 2
+					e.SourceNetmask = 64
+					e.Address = clientIP.To16().Mask(net.CIDRMask(64, 128))
+				} else {
+					// Skip EDNS if IP parsing fails
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Invalid client IP for EDNS: %s", from)
+					}
+					goto skipEDNS
 				}
-				goto skipEDNS
+				
+				e.SourceScope = 0
+				o.Option = append(o.Option, e)
+				if os.Getenv("DEBUG") != "" {
+					log.Printf("Adding EDNS subnet for client %s", from)
+				}
+				r.Extra = append(r.Extra, o)
+			} else {
+				if os.Getenv("DEBUG") != "" {
+					log.Printf("Could not parse client IP for EDNS: %s", from)
+				}
 			}
-			
-			e.SourceScope = 0
-			o.Option = append(o.Option, e)
-			if os.Getenv("DEBUG") != "" {
-				log.Printf("EDNS in Request %s:\n", r.Extra)
-			}
-			r.Extra = append(r.Extra, o)
 			skipEDNS:
+		} else if ednsAdd != "" && hasEDNSSubnet(r) {
+			if os.Getenv("DEBUG") != "" {
+				log.Printf("Request already contains EDNS subnet, not adding client IP %s", from)
+			}
 		}
 		dnsClient := &dns.Client{Net: "udp"}
 		a, _, _ := dnsClient.Exchange(r, upstream)
