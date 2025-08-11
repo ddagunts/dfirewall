@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -21,11 +22,91 @@ type Route struct {
 	To   net.IP
 }
 
+type ClientTTLConfig struct {
+	networks map[*net.IPNet]int
+	defaults int
+}
+
 func inRange(ipLow, ipHigh, ip netip.Addr) bool {
 	return ipLow.Compare(ip) <= 0 && ipHigh.Compare(ip) > 0
 }
 
+func parseClientTTLConfig() *ClientTTLConfig {
+	config := &ClientTTLConfig{
+		networks: make(map[*net.IPNet]int),
+		defaults: 30, // default 30 seconds
+	}
+
+	// Check for default TTL padding
+	if ttlPadEnv := os.Getenv("TTL_PAD_SECONDS_DEFAULT"); ttlPadEnv != "" {
+		if value, err := strconv.Atoi(ttlPadEnv); err == nil && value >= 0 {
+			config.defaults = value
+			log.Printf("TTL_PAD_SECONDS_DEFAULT is set to %d seconds", value)
+		} else {
+			log.Printf("Invalid TTL_PAD_SECONDS_DEFAULT value: %s, using default 30 seconds", ttlPadEnv)
+		}
+	} else {
+		log.Printf("TTL_PAD_SECONDS_DEFAULT is not set, using default 30 seconds")
+	}
+
+	// Parse all environment variables that match the pattern TTL_PAD_SECONDS_*
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "TTL_PAD_SECONDS_") && !strings.HasSuffix(env, "_DEFAULT") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			
+			key := parts[0]
+			value := parts[1]
+			
+			// Extract network from key (TTL_PAD_SECONDS_192_168_1_0_24 -> 192.168.1.0/24)
+			networkPart := strings.TrimPrefix(key, "TTL_PAD_SECONDS_")
+			cidr := strings.ReplaceAll(networkPart, "_", ".")
+			// Replace the last dot with a slash for CIDR notation
+			lastDot := strings.LastIndex(cidr, ".")
+			if lastDot > 0 {
+				cidr = cidr[:lastDot] + "/" + cidr[lastDot+1:]
+			}
+			
+			if _, network, err := net.ParseCIDR(cidr); err == nil {
+				if ttlValue, err := strconv.Atoi(value); err == nil && ttlValue >= 0 {
+					config.networks[network] = ttlValue
+					log.Printf("TTL padding for %s: %d seconds", cidr, ttlValue)
+				} else {
+					log.Printf("Invalid TTL value for %s: %s", cidr, value)
+				}
+			} else {
+				log.Printf("Invalid network format for %s: %s", key, cidr)
+			}
+		}
+	}
+	
+	return config
+}
+
+func (config *ClientTTLConfig) getTTLPadding(clientIP string) int {
+	ip := net.ParseIP(clientIP)
+	if ip == nil {
+		return config.defaults
+	}
+	
+	// Check if client IP matches any configured networks
+	for network, ttlPad := range config.networks {
+		if network.Contains(ip) {
+			return ttlPad
+		}
+	}
+	
+	// Return default if no network matches
+	return config.defaults
+}
+
 func Register(rt Route) error {
+	return RegisterWithRedis(rt, nil)
+}
+
+func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 	upstream := os.Getenv("UPSTREAM")
 	if upstream == "" {
 		log.Fatal("Missing UPSTREAM env var: please declare with UPSTREAM=host:port")
@@ -33,11 +114,6 @@ func Register(rt Route) error {
 	ednsAdd := os.Getenv("ENABLE_EDNS")
 
 	//addAllIPs := os.Getenv("ADD_ALL_IPS")
-
-	redisEnv := os.Getenv("REDIS")
-	if redisEnv == "" {
-		log.Printf("Missing REDIS env var, this isn't meant to be run without Redis")
-	}
 
 	invoke := os.Getenv("INVOKE_SCRIPT")
 	if invoke == "" {
@@ -53,28 +129,37 @@ func Register(rt Route) error {
 		log.Printf("INVOKE_ALWAYS is set, executing INVOKE script for every matching request")
 	}
 
-	opt, err := redis.ParseURL(redisEnv)
-	if err != nil {
-		panic(err)
-	}
-
-	redisClient := redis.NewClient(opt)
+	// Parse per-client TTL configuration
+	ttlConfig := parseClientTTLConfig()
 
 	ctx := context.Background()
 
-	err = redisClient.Set(ctx, "ConnTest", "succeeded", 0).Err()
-	if err != nil {
-		log.Printf("Unable to add key to Redis!  This isn't meant to be run without Redis:\n %s", err.Error())
+	if redisClient == nil {
+		redisEnv := os.Getenv("REDIS")
+		if redisEnv == "" {
+			log.Printf("Missing REDIS env var, this isn't meant to be run without Redis")
+		} else {
+			opt, err := redis.ParseURL(redisEnv)
+			if err != nil {
+				panic(err)
+			}
+			redisClient = redis.NewClient(opt)
+
+			err = redisClient.Set(ctx, "ConnTest", "succeeded", 0).Err()
+			if err != nil {
+				log.Printf("Unable to add key to Redis!  This isn't meant to be run without Redis:\n %s", err.Error())
+			}
+			val, err := redisClient.Get(ctx, "ConnTest").Result()
+			if err != nil {
+				log.Printf("Unable to read key from Redis!  This isn't meant to be run without Redis:\n %s", err.Error())
+			}
+			_, err = redisClient.Del(ctx, "ConnTest").Result()
+			if err != nil {
+				log.Printf("Unable to delete key from Redis!  This isn't meant to be run without Redis:\n %s", err.Error())
+			}
+			log.Printf("Redis connection %s", val)
+		}
 	}
-	val, err := redisClient.Get(ctx, "ConnTest").Result()
-	if err != nil {
-		log.Printf("Unable to read key from Redis!  This isn't meant to be run without Redis:\n %s", err.Error())
-	}
-	_, err = redisClient.Del(ctx, "ConnTest").Result()
-	if err != nil {
-		log.Printf("Unable to delete key from Redis!  This isn't meant to be run without Redis:\n %s", err.Error())
-	}
-	log.Printf("Redis connection %s", val)
 
 	dns.HandleFunc(rt.Zone, func(w dns.ResponseWriter, r *dns.Msg) {
 
@@ -137,16 +222,14 @@ func Register(rt Route) error {
 				// padTtl is used in Redis TTL and in invoked scripts,
 				// while ttl is used in client response
 				ttl := a.Answer[i].Header().Ttl
-				padTtl = ttl
-				// pad very low TTLs
-				if ttl < 30 {
-					padTtl = ttl + 30
-				}
-				// clamp TTL at 1 hour
+				// clamp TTL at 1 hour for client response
 				if ttl > 3600 {
-					padTtl = 3600
+					ttl = 3600
 					a.Answer[i].Header().Ttl = 3600 // to the client as well
 				}
+				// pad TTL with per-client configured value (after clamping)
+				clientTTLPad := ttlConfig.getTTLPadding(from)
+				padTtl = ttl + uint32(clientTTLPad)
 
 				// respond with all records prior to first A record, and first A record
 				// TODO: add option to handle all IPs
@@ -163,54 +246,106 @@ func Register(rt Route) error {
 				newTtl := time.Duration(padTtl) * time.Second
 				newTtlS := strconv.FormatFloat(newTtl.Seconds(), 'f', -1, 64)
 				domain := r.Question[0].Name
-				key := "rules:" + from + ":" + ipAddress.String() + ":" + domain
-				os.Setenv("CLIENT_IP", from)
-				os.Setenv("RESOLVED_IP", ipAddress.String())
-				os.Setenv("DOMAIN", domain)
-				os.Setenv("TTL", newTtlS)
-				_, err := redisClient.Get(ctx, key).Result()
-				// insert into Redis
-				if err != nil {
-					log.Printf("Add %s for %s, %s %s", ipAddress, from, domain, newTtl)
-					resp, err := redisClient.Set(ctx, key, newTtl, newTtl).Result()
+				key := "rules|" + from + "|" + ipAddress.String() + "|" + domain
+
+				// Validate inputs before passing to script
+				if net.ParseIP(from) == nil {
+					log.Printf("Invalid CLIENT_IP: %s", from)
+					w.WriteMsg(a)
+					return
+				}
+				if !ipAddress.IsValid() {
+					log.Printf("Invalid RESOLVED_IP: %s", ipAddress.String())
+					w.WriteMsg(a)
+					return
+				}
+				if newTtl <= 0 {
+					log.Printf("Invalid TTL: %s", newTtlS)
+					w.WriteMsg(a)
+					return
+				}
+				// Robust domain validation
+				if strings.Contains(domain, "\x00") || len(domain) == 0 || len(domain) > 253 {
+					log.Printf("Invalid DOMAIN: %s", domain)
+					w.WriteMsg(a)
+					return
+				}
+				// Check for valid DNS name format
+				domain = strings.TrimSuffix(domain, ".")
+				for _, label := range strings.Split(domain, ".") {
+					if len(label) == 0 || len(label) > 63 {
+						log.Printf("Invalid DOMAIN label length: %s", domain)
+						w.WriteMsg(a)
+						return
+					}
+					for i, r := range label {
+						if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-') {
+							log.Printf("Invalid DOMAIN character: %s", domain)
+							w.WriteMsg(a)
+							return
+						}
+						if r == '-' && (i == 0 || i == len(label)-1) {
+							log.Printf("Invalid DOMAIN hyphen position: %s", domain)
+							w.WriteMsg(a)
+							return
+						}
+					}
+				}
+				if redisClient != nil {
+					_, err := redisClient.Get(ctx, key).Result()
+					// insert into Redis
 					if err != nil {
-						log.Printf("Unable to add key to Redis! %s", err.Error())
-					}
-					if os.Getenv("DEBUG") != "" {
-						log.Printf("Redis insert: %s", resp)
-					}
-					// first appearance, invoke custom script
-					if invoke != "" {
-						cmd := exec.Command(invoke)
-						output, err := cmd.CombinedOutput()
+						log.Printf("Add %s for %s, %s %s", ipAddress, from, domain, newTtl)
+						resp, err := redisClient.Set(ctx, key, newTtl, newTtl).Result()
 						if err != nil {
-							if os.Getenv("DEBUG") != "" {
-								log.Fatalf("Invoke command failed: %v\nOutput: %s", err, output)
-							}
+							log.Printf("Unable to add key to Redis! %s", err.Error())
 						}
 						if os.Getenv("DEBUG") != "" {
-							fmt.Printf("Invoke command succeeded:\n%s", output)
+							log.Printf("Redis insert: %s", resp)
 						}
-					}
-				} else {
-					log.Printf("Update %s for %s, %s %s", ipAddress, from, domain, newTtl)
-					resp, err := redisClient.Set(ctx, key, "", newTtl).Result()
-					if err != nil {
-						log.Printf("Unable to add key to Redis! %s", err.Error())
-					}
-					if os.Getenv("DEBUG") != "" {
-						log.Printf("Redis insert: %s", resp)
-					}
-					if invoke != "" && invoke_always != "" {
-						cmd := exec.Command(invoke)
-						output, err := cmd.CombinedOutput()
-						if err != nil {
+						// first appearance, invoke custom script
+						if invoke != "" {
+							cmd := exec.Command("/bin/sh", invoke)
+							cmd.Env = append(os.Environ(),
+								"CLIENT_IP="+from,
+								"RESOLVED_IP="+ipAddress.String(),
+								"DOMAIN="+domain,
+								"TTL="+newTtlS)
+							output, err := cmd.CombinedOutput()
+							if err != nil {
+								if os.Getenv("DEBUG") != "" {
+									log.Fatalf("Invoke command failed: %v\nOutput: %s", err, output)
+								}
+							}
 							if os.Getenv("DEBUG") != "" {
-								log.Fatalf("Invoke command failed: %v\nOutput: %s", err, output)
+								fmt.Printf("Invoke command succeeded:\n%s", output)
 							}
 						}
+					} else {
+						log.Printf("Update %s for %s, %s %s", ipAddress, from, domain, newTtl)
+						resp, err := redisClient.Set(ctx, key, "", newTtl).Result()
+						if err != nil {
+							log.Printf("Unable to add key to Redis! %s", err.Error())
+						}
 						if os.Getenv("DEBUG") != "" {
-							fmt.Printf("Invoke command succeeded:\n%s", output)
+							log.Printf("Redis insert: %s", resp)
+						}
+						if invoke != "" && invoke_always != "" {
+							cmd := exec.Command("/bin/sh", invoke)
+							cmd.Env = append(os.Environ(),
+								"CLIENT_IP="+from,
+								"RESOLVED_IP="+ipAddress.String(),
+								"DOMAIN="+domain,
+								"TTL="+newTtlS)
+							output, err := cmd.CombinedOutput()
+							if err != nil {
+								if os.Getenv("DEBUG") != "" {
+									log.Fatalf("Invoke command failed: %v\nOutput: %s", err, output)
+								}
+							}
+							if os.Getenv("DEBUG") != "" {
+								fmt.Printf("Invoke command succeeded:\n%s", output)
+							}
 						}
 					}
 				}

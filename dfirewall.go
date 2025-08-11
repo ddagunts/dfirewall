@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/miekg/dns"
+	"github.com/redis/go-redis/v9"
 )
 
 var routes = []Route{{Zone: "."}}
@@ -28,8 +30,39 @@ func main() {
 		log.Printf("listening on port 53, set PORT env var to change")
 	}
 
+	redisEnv := os.Getenv("REDIS")
+	if redisEnv == "" {
+		log.Printf("Missing REDIS env var, this isn't meant to be run without Redis")
+	}
+
+	var redisClient *redis.Client
+	if redisEnv != "" {
+		opt, err := redis.ParseURL(redisEnv)
+		if err != nil {
+			log.Fatalf("Failed to parse Redis URL: %v", err)
+		}
+		redisClient = redis.NewClient(opt)
+
+		ctx := context.Background()
+		err = redisClient.Set(ctx, "ConnTest", "succeeded", 0).Err()
+		if err != nil {
+			log.Printf("Unable to add key to Redis! This isn't meant to be run without Redis:\n %s", err.Error())
+		}
+		val, err := redisClient.Get(ctx, "ConnTest").Result()
+		if err != nil {
+			log.Printf("Unable to read key from Redis! This isn't meant to be run without Redis:\n %s", err.Error())
+		}
+		_, err = redisClient.Del(ctx, "ConnTest").Result()
+		if err != nil {
+			log.Printf("Unable to delete key from Redis! This isn't meant to be run without Redis:\n %s", err.Error())
+		}
+		log.Printf("Redis connection %s", val)
+
+		setupWebUI(redisClient)
+	}
+
 	for i := range routes {
-		err := Register(routes[i])
+		err := RegisterWithRedis(routes[i], redisClient)
 		if err != nil {
 			log.Fatalf("Failed to register route for: %q: %s", routes[i].Zone, err)
 		}

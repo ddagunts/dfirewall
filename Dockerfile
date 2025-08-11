@@ -19,8 +19,10 @@ copy --from=build /dfirewall /dfirewall
 
 copy scripts scripts
 
-# UDP and TCP
+# UDP and TCP DNS
 expose 53
+# HTTP Web UI
+expose 8080
 
 user nobody:nogroup
 

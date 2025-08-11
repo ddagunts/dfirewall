@@ -22,7 +22,8 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
-      #- "PORT=53"
+      #- "PORT=53"  # DNS port
+      #- "WEB_PORT=8080"  # Web UI port (default: 8080)
       - "UPSTREAM=1.1.1.1:53"
       - "REDIS=redis://127.0.0.1:6379"
       #- "ENABLE_EDNS=1" # needs fixing
