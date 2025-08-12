@@ -4,7 +4,7 @@
 
 **Current Status**: PRODUCTION READY ✅  
 **Recommendation**: Suitable for production deployment with appropriate configuration  
-**Last Analysis**: 2025-08-05
+**Last Analysis**: 2025-08-12
 
 The dfirewall codebase demonstrates excellent security posture with comprehensive defensive measures. All critical security vulnerabilities have been resolved. The core DNS proxy runs unprivileged, with optional firewall management handled through configurable scripts that use appropriate privilege escalation methods (SSH, APIs, sudo).
 
@@ -29,11 +29,12 @@ Major security improvements have been implemented:
 ## 🎯 **COMPREHENSIVE SECURITY ASSESSMENT**
 
 ### Code Quality Metrics
-- **Total Lines of Code**: 12,756 Go lines across 19 files
-- **Test Coverage**: Comprehensive with 89+ test functions covering security validation
+- **Total Lines of Code**: 13,157 Go lines across 19 files (updated 2025-08-12)
+- **Test Coverage**: Comprehensive with 89+ test functions across 11 test files covering security validation
 - **Code Quality**: No `panic()` or `os.Exit()` calls in application logic
 - **Error Handling**: Consistent error handling with graceful degradation
 - **Input Validation**: Universal use of `validateForShellExecution()` security function
+- **Documentation**: 9 comprehensive markdown documentation files in docs/ directory
 
 ### ✅ **ALL HIGH PRIORITY ISSUES RESOLVED**
 
@@ -111,9 +112,10 @@ Major security improvements have been implemented:
 
 **Container Hardening (LOW)**
 - **Location**: `docker-compose.yml` and `Dockerfile`
-- **Issue**: Uses `latest` Redis tag, requires NET_ADMIN capability
-- **Status**: Acceptable for development, should pin versions in production
-- **Recommendation**: Pin Redis version, use security scanning, implement non-root execution
+- **Issue**: Requires NET_ADMIN capability for direct firewall management
+- **Status**: **IMPROVED** - Now uses pinned Redis 7.2-alpine, read-only filesystem, tmpfs mounts, no-new-privileges
+- **Current Security**: Uses debian:bookworm base, nobody:nogroup user by default, health checks
+- **Recommendation**: Consider rootless deployment with SSH-based firewall scripts for maximum security
 
 ---
 
@@ -165,11 +167,13 @@ services:
 - **Network Security**: DNS validation, upstream routing security, container isolation
 
 ### Code Quality & Testing
-- **Test Coverage**: 89+ test functions with comprehensive security validation
+- **Test Coverage**: 89+ test functions across 11 test files with comprehensive security validation
 - **Static Analysis**: Clean Go vet results with no panic/exit calls in logic
 - **Error Handling**: Consistent error patterns with graceful degradation
-- **Documentation**: 13 comprehensive documentation files with security guidance
+- **Documentation**: 9 comprehensive documentation files in docs/ directory with security guidance
 - **Configuration**: Secure defaults with validation and sanitization
+- **CNAME Security**: Dedicated test suite for CNAME blacklist bypass prevention
+- **Redis Validation**: Comprehensive Redis key parsing and validation security tests
 
 ---
 
@@ -225,7 +229,7 @@ dfirewall demonstrates **exceptional security architecture** and is **fully prod
 - **🧠 Memory Safety**: Bounded caches with automatic cleanup prevent resource exhaustion
 - **🔍 API Security**: Complete credential sanitization and secure headers implementation
 - **📊 Test Coverage**: 89+ security-focused test functions with comprehensive validation
-- **📚 Documentation**: 13 comprehensive documentation files with security guidance
+- **📚 Documentation**: 9 comprehensive documentation files in docs/ directory with security guidance
 
 ### **Security Architecture Grade: A+ 🏆**
 

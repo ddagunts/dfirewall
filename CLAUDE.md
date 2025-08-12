@@ -10,16 +10,18 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 
 ### Core Components
 
-- **dfirewall.go**: Main entry point that starts UDP and TCP DNS servers on port 53
-- **proxy.go**: DNS proxy logic that handles requests, queries upstream DNS, stores results in Redis, and executes firewall scripts
-- **logcollector.go**: Log collection system with SSH and local file monitoring, regex pattern matching, and integration with firewall rules
-- **api.go**: HTTP API handlers for web UI and REST endpoints
-- **webui.go**: Web UI server with authentication middleware
-- **auth.go**: Authentication system supporting password, LDAP, and header-based auth
-- **redis.go**: Redis client management with TLS and authentication support
-- **security.go**: Security validation, blacklisting, reputation checking, and AI threat detection
-- **types.go**: Data structures and configuration types
-- **scripts/**: Shell scripts for firewall management, expiration handling, and validation
+- **dfirewall.go**: Main entry point that starts UDP and TCP DNS servers on port 53 (64 lines)
+- **proxy.go**: DNS proxy logic that handles requests, queries upstream DNS, stores results in Redis, and executes firewall scripts (~1200+ lines)
+- **logcollector.go**: Log collection system with SSH and local file monitoring, regex pattern matching, and integration with firewall rules (~900+ lines)
+- **api.go**: HTTP API handlers for web UI and REST endpoints (~1000+ lines)
+- **webui.go**: Web UI server with authentication middleware and rate limiting (~400+ lines)
+- **auth.go**: Authentication system supporting password, LDAP, and header-based auth (~500+ lines)
+- **redis.go**: Redis client management with TLS and authentication support (~300+ lines)
+- **security.go**: Security validation, blacklisting, reputation checking, and AI threat detection (~2400+ lines)
+- **types.go**: Data structures and configuration types (~540+ lines)
+- **scripts/**: Shell scripts for firewall management, expiration handling, and validation (8 scripts)
+- **config/**: Example and active configuration files (10+ JSON/text files)
+- **docs/**: Comprehensive documentation (9 markdown files)
 
 ### Architecture Flow
 
@@ -152,51 +154,79 @@ Optional:
 
 ## Code Organization
 
+**Codebase Statistics (Current)**
+- **Total Go Code**: ~13,157 lines across 19 Go files
+- **Test Files**: 11 comprehensive test files with 89+ test functions
+- **Configuration**: 10+ JSON configuration files with examples
+- **Documentation**: 9 detailed markdown files in docs/ directory
+- **Scripts**: 8 shell scripts for firewall and validation operations
+
 ### Configuration Management
 - All JSON configs are in `config/` with `.example.json` files showing structure
-- Configuration structs are centralized in `types.go`
-- Environment variable processing in `proxy.go` during startup
-- Configuration validation functions per feature (e.g., `validateLogSource()`)
+- Configuration structs are centralized in `types.go` (540+ lines)
+- Environment variable processing in `proxy.go` during startup via `Register()` function
+- Configuration validation functions per feature (e.g., `validateLogSource()` in logcollector.go)
+- Real-time configuration status available via `/api/config/status` endpoint
 
 ### Security Pipeline
-- Input validation in `security.go` with `validateForShellExecution()`
+- Input validation in `security.go` with `validateForShellExecution()` (security.go:1917-2033)
 - Blacklisting: Redis-based and file-based, configured via `BLACKLIST_CONFIG`
-- Reputation checking: Multiple providers (VirusTotal, AbuseIPDB), configured via `REPUTATION_CONFIG`
-- AI analysis: OpenAI/Claude integration, configured via `AI_CONFIG`
+- Reputation checking: Multiple providers (VirusTotal, AbuseIPDB, URLVoid, custom), configured via `REPUTATION_CONFIG`
+- AI analysis: OpenAI/Claude/local model integration, configured via `AI_CONFIG`
 - Custom scripts: User-provided validation, configured via `CUSTOM_SCRIPT_CONFIG`
+- Memory safety: Bounded caches with automatic cleanup (security.go:2259-2434)
 
 ### Authentication System
-- Multi-method auth: password, LDAP, header-based
-- Session management with JWT tokens
+- Multi-method auth: password, LDAP, header-based (auth.go)
+- Session management with JWT tokens and secure secrets
+- Rate limiting: 60 requests/minute general, 5 login attempts/minute (webui.go:12-45)
 - Middleware pattern in `webui.go` for protecting endpoints
-- TLS/HTTPS support for web UI
+- TLS/HTTPS support for web UI with certificate management
 
 ### Data Flow Patterns
 - Redis keys use format: `rules:clientIP|resolvedIP|domain` (pipe-separated for IPv6 safety)
 - TTL inheritance: DNS TTL → Redis TTL → firewall rule TTL (clamped to 3600s max)
-- Script execution: async with validation, timeout (30s), and environment variables
-- Error handling: graceful degradation, logging, continue on non-critical failures
+- Script execution: configurable sync/async with validation, timeout (30s), and environment variables
+- Error handling: graceful degradation, structured logging, continue on non-critical failures
+- CNAME security: Uses originally requested domain for blacklist checks, not resolved CNAME target
 
 ### Testing Strategy
-- Unit tests per module: `*_test.go` files
+- Unit tests per module: 11 `*_test.go` files with 89+ test functions
 - Integration tests for DNS proxy functionality
-- Security validation tests for shell injection prevention
+- Security validation tests for shell injection prevention (security_validation_test.go)
 - API endpoint tests with mock Redis clients
+- Comprehensive CNAME blacklist bypass testing (cname_blacklist_test.go)
+- Redis key validation testing (redis_key_validation_test.go)
 
 ### Dependencies
 
-- Go 1.24+
-- Redis server (with keyspace notifications for expiration monitoring)
-- Linux with iptables and ipset (for firewall functionality)
-- SSH access for remote log collection
+- **Go 1.24+** (current module requirement)
+- **Redis 7.2+** (Redis server with keyspace notifications for expiration monitoring)
+- **Linux with iptables and ipset** (for firewall functionality, optional - scripts can use APIs/SSH)
+- **SSH access** (for remote log collection and firewall management)
+- **Docker & Docker Compose** (recommended deployment method)
+
+**Key Go Dependencies:**
+- `github.com/miekg/dns v1.1.68` - DNS protocol implementation
+- `github.com/redis/go-redis/v9 v9.11.0` - Redis client with TLS support
+- `github.com/golang-jwt/jwt/v5 v5.3.0` - JWT token handling
+- `github.com/go-ldap/ldap/v3 v3.4.11` - LDAP authentication
+- `github.com/fsnotify/fsnotify v1.9.0` - File system monitoring
+- `golang.org/x/crypto v0.40.0` - SSH and cryptographic functions
 
 ## Docker Deployment
 
-The application runs in containers with:
-- Redis container for state storage
-- dfirewall container with NET_ADMIN capability for firewall management
-- Host networking mode for intercepting DNS traffic
-- Debian base image with iptables and ipset tools
+**Current Docker Configuration:**
+- **Base Images**: golang:1.24 (build stage), debian:bookworm (runtime)
+- **Redis**: redis:7.2-alpine container with health checks
+- **Networking**: Host mode for DNS interception (exposes WEB_UI_PORT)
+- **Security**: read-only filesystem, tmpfs for /tmp and /dev/shm, no-new-privileges
+- **Capabilities**: NET_ADMIN (can be removed for unprivileged deployment with SSH-based scripts)
+- **User**: Configurable - defaults to nobody:nogroup, can override to root for demo
+- **Ports**: DNS (53/udp, 53/tcp), Web UI (configurable via WEB_UI_PORT)
+- **Volumes**: Scripts and config directories mounted
+- **Health Checks**: Redis health monitoring with automatic restart
+- **Dependencies**: dfirewall waits for Redis to be healthy before starting
 
 ## Security Considerations
 
@@ -295,16 +325,58 @@ Set `UPSTREAM_CONFIG` environment variable to a JSON configuration file:
 - Web UI: graceful degradation with user-friendly error messages
 - Log collection: reconnect automatically, don't stop DNS service
 
-## Recent Security Improvements
+## Web UI API Endpoints
+
+The Web UI provides a comprehensive REST API for managing firewall rules and security features:
+
+### Core API Endpoints
+- `/api/rules` - List firewall rules (supports grouped view)
+- `/api/stats` - System statistics and metrics
+- `/api/rules/delete` - Delete specific firewall rules
+- `/api/health` - System health status
+- `/api/docs` - API documentation
+- `/api/config/status` - Configuration status (with credential sanitization)
+
+### Security Management APIs
+- `/api/blacklist/ip/add` - Add IP to blacklist
+- `/api/blacklist/ip/remove` - Remove IP from blacklist
+- `/api/blacklist/domain/add` - Add domain to blacklist
+- `/api/blacklist/domain/remove` - Remove domain from blacklist
+- `/api/blacklist/list` - List current blacklists
+- `/api/reputation/check` - Check IP/domain reputation
+- `/api/ai/analyze` - AI-powered threat analysis
+
+### Log Collection APIs
+- `/api/logcollector/stats` - Log collector statistics
+- `/api/logcollector/config` - Log collector configuration
+
+### Authentication Endpoints
+- `/login` - User authentication (rate limited: 5 attempts/minute)
+- `/logout` - Session termination
+
+All API endpoints (except login/logout) require authentication and are rate limited (60 requests/minute per IP).
+
+## Recent Security Improvements (2025)
 
 ### Pattern Matching Unification
 Recent updates have unified domain pattern matching across all features:
 - **Shared Function**: `matchesDomainPattern()` in `security.go:1931-1962` provides consistent matching
 - **Wildcard Support**: `*.example.com` patterns work in both upstream routing and blacklists
-- **CNAME Security**: Fixed blacklist bypass where CNAME resolution could circumvent blocking
+- **CNAME Security**: Fixed blacklist bypass where CNAME resolution could circumvent blocking (proxy.go:574-580)
 - **Redis Consistency**: Redis and file-based blacklists now have identical pattern support
 
 ### Domain Blacklist Security Fixes
 - **CNAME Bypass Prevention**: Domain blacklisting now uses originally requested domain, not resolved CNAME target
 - **Redis Parent Domain Support**: Redis blacklists now support parent domain blocking (e.g., `evil.com` blocks `www.evil.com`)
 - **Pattern Consistency**: Wildcard and regex patterns work consistently across Redis and file-based blacklists
+
+### Memory Safety & Performance
+- **Bounded Caches**: All caches have configurable size limits (default: 10,000 entries) with automatic cleanup
+- **Rate Limiting**: Built-in protection against brute force attacks (60 requests/minute general, 5 login attempts/minute)
+- **API Security**: Comprehensive credential sanitization in configuration status endpoints
+- **Resource Management**: Script execution timeouts, cleanup routines, graceful shutdown handling
+
+### Testing & Validation
+- **Security Test Coverage**: 89+ test functions including comprehensive shell injection prevention tests
+- **CNAME Security Testing**: Dedicated test suite for CNAME blacklist bypass scenarios
+- **Redis Key Validation**: Extensive testing for Redis key parsing and validation security
