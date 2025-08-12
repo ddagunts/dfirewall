@@ -307,7 +307,7 @@ Set `UPSTREAM_CONFIG` environment variable to a JSON configuration file:
 
 ### Redis Key Patterns
 - Firewall rules: `rules:clientIP|resolvedIP|domain`
-- Blacklists: `blacklist:ips`, `blacklist:domains` (Redis sets)
+- Blacklists: `dfirewall:blacklist:ips`, `dfirewall:blacklist:domains` (Redis sets)
 - Log collector stats: `logcollector:stats:*`
 - AI cache: `ai:cache:*`
 - Reputation cache: `reputation:cache:*`

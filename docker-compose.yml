@@ -30,7 +30,7 @@ services:
       - no-new-privileges:true
     environment:
       #- "PORT=53"
-      - "UPSTREAM=1.1.1.1:53"
+      - "UPSTREAM=100.64.1.3:53"
       - "REDIS=redis://127.0.0.1:6379"
       - "ENABLE_EDNS=1" # Enable EDNS Client Subnet
       #- "DEBUG=1"
