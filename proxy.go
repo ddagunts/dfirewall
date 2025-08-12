@@ -37,10 +37,68 @@ func inRange(ipLow, ipHigh, ip netip.Addr) bool {
 	return ip.Compare(ipLow) >= 0 && ip.Compare(ipHigh) <= 0
 }
 
-// addGracePeriod adds a configurable grace period to ALL DNS TTLs
+// addGracePeriod adds a configurable grace period to DNS TTLs
 // This provides a buffer time after DNS TTL expiration before firewall rules are removed
 // Applied to both Redis storage and script execution for consistency
 func addGracePeriod(originalTTL uint32) uint32 {
+	return originalTTL + ttlGracePeriodSeconds
+}
+
+// getTTLGracePeriodForClient returns the TTL grace period that would be used for a given client
+// Used for displaying configuration information in APIs
+func getTTLGracePeriodForClient(clientIP string) uint32 {
+	if scriptConfig != nil && len(scriptConfig.Clients) > 0 {
+		// Find client-specific configuration
+		for _, clientConfig := range scriptConfig.Clients {
+			if matchesClientPattern(clientIP, clientConfig.ClientPattern) {
+				if clientConfig.TTLGracePeriodSeconds != nil {
+					return *clientConfig.TTLGracePeriodSeconds
+				}
+				break // Found matching client but no TTL setting, use defaults below
+			}
+		}
+	}
+	
+	// Check if defaults in script configuration override global setting
+	if scriptConfig != nil && scriptConfig.Defaults.TTLGracePeriodSeconds > 0 {
+		return scriptConfig.Defaults.TTLGracePeriodSeconds
+	}
+	
+	// Fall back to global environment variable setting
+	return ttlGracePeriodSeconds
+}
+
+// addGracePeriodForClient adds a client-specific grace period to DNS TTLs
+// Looks up the client's configuration and uses their specific TTL grace period
+// Falls back to global ttlGracePeriodSeconds if no client-specific setting is found
+func addGracePeriodForClient(originalTTL uint32, clientIP string) uint32 {
+	if scriptConfig != nil && len(scriptConfig.Clients) > 0 {
+		// Find client-specific configuration
+		for _, clientConfig := range scriptConfig.Clients {
+			if matchesClientPattern(clientIP, clientConfig.ClientPattern) {
+				if clientConfig.TTLGracePeriodSeconds != nil {
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Using client-specific TTL grace period %d seconds for %s", *clientConfig.TTLGracePeriodSeconds, clientIP)
+					}
+					return originalTTL + *clientConfig.TTLGracePeriodSeconds
+				}
+				break // Found matching client but no TTL setting, use defaults below
+			}
+		}
+	}
+	
+	// Check if defaults in script configuration override global setting
+	if scriptConfig != nil && scriptConfig.Defaults.TTLGracePeriodSeconds > 0 {
+		if os.Getenv("DEBUG") != "" {
+			log.Printf("Using default TTL grace period %d seconds from config for %s", scriptConfig.Defaults.TTLGracePeriodSeconds, clientIP)
+		}
+		return originalTTL + scriptConfig.Defaults.TTLGracePeriodSeconds
+	}
+	
+	// Fall back to global environment variable setting
+	if os.Getenv("DEBUG") != "" {
+		log.Printf("Using global TTL grace period %d seconds for %s", ttlGracePeriodSeconds, clientIP)
+	}
 	return originalTTL + ttlGracePeriodSeconds
 }
 
@@ -538,12 +596,36 @@ func Register(rt Route) error {
 				selectedUpstream, from, requestedDomain, upstream)
 		}
 
-		// Query selected upstream DNS
+		// Query selected upstream DNS with automatic TCP retry for truncated responses
 		resp, _, err := c.Exchange(r, selectedUpstream)
 		if err != nil {
 			log.Printf("Error querying upstream DNS: %v", err)
 			dns.HandleFailed(w, r)
 			return
+		}
+		
+		// Handle truncated responses by retrying with TCP
+		if resp.Truncated {
+			if os.Getenv("DEBUG") != "" {
+				log.Printf("UDP response truncated for %s, retrying with TCP", requestedDomain)
+			}
+			
+			// Create TCP client for retry
+			tcpClient := &dns.Client{
+				Net:     "tcp",
+				Timeout: 5 * time.Second,
+			}
+			
+			tcpResp, _, tcpErr := tcpClient.Exchange(r, selectedUpstream)
+			if tcpErr != nil {
+				log.Printf("Error querying upstream DNS via TCP: %v", tcpErr)
+				// Fall back to truncated UDP response rather than failing completely
+			} else {
+				resp = tcpResp
+				if os.Getenv("DEBUG") != "" {
+					log.Printf("TCP retry successful for %s", requestedDomain)
+				}
+			}
 		}
 
 		// Process the response and extract IPs
@@ -567,8 +649,8 @@ func Register(rt Route) error {
 					}
 				}
 				
-				// Add grace period to TTL for both Redis storage and script execution
-				ttlWithGrace := addGracePeriod(rrType.Hdr.Ttl)
+				// Add grace period to TTL for both Redis storage and script execution (client-specific)
+				ttlWithGrace := addGracePeriodForClient(rrType.Hdr.Ttl, from)
 				ttl := strconv.FormatUint(uint64(ttlWithGrace), 10)
 
 				if os.Getenv("DEBUG") != "" {
@@ -688,8 +770,8 @@ func Register(rt Route) error {
 					}
 				}
 				
-				// Add grace period to TTL for both Redis storage and script execution
-				ttlWithGrace := addGracePeriod(rrType.Hdr.Ttl)
+				// Add grace period to TTL for both Redis storage and script execution (client-specific)
+				ttlWithGrace := addGracePeriodForClient(rrType.Hdr.Ttl, from)
 				ttl := strconv.FormatUint(uint64(ttlWithGrace), 10)
 
 				if os.Getenv("DEBUG") != "" {

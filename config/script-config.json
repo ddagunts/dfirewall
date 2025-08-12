@@ -5,6 +5,7 @@
     "expire_script": "/scripts/expire_generic.sh",
     "invoke_always": false,
     "sync_execution": false,
+    "ttl_grace_period_seconds": 90,
     "environment": {
       "DEFAULT_POLICY": "deny",
       "LOG_LEVEL": "info"
@@ -13,11 +14,12 @@
   "clients": [
     {
       "client_pattern": "192.168.1.0/24",
-      "description": "Corporate network - use strict firewall rules with synchronous execution",
+      "description": "Corporate network - use strict firewall rules with synchronous execution and extended TTL",
       "invoke_script": "/scripts/invoke_corporate.sh",
       "expire_script": "/scripts/expire_corporate.sh",
       "invoke_always": true,
       "sync_execution": true,
+      "ttl_grace_period_seconds": 300,
       "environment": {
         "SECURITY_LEVEL": "high",
         "AUDIT_LOG": "/var/log/corporate-firewall.log",
@@ -26,9 +28,10 @@
     },
     {
       "client_pattern": "192.168.100.0/24",
-      "description": "Guest network - use basic firewall rules",
+      "description": "Guest network - use basic firewall rules with short TTL for rapid expiration",
       "invoke_script": "/scripts/invoke_guest.sh",
       "invoke_always": false,
+      "ttl_grace_period_seconds": 30,
       "environment": {
         "SECURITY_LEVEL": "basic",
         "BANDWIDTH_LIMIT": "10Mbps"
@@ -55,10 +58,11 @@
     },
     {
       "client_pattern": "192.168.200.0/24",
-      "description": "IoT devices - restricted access with custom expiration handling",
+      "description": "IoT devices - restricted access with custom expiration handling and very short TTL",
       "invoke_script": "/scripts/invoke_iot.sh",
       "expire_script": "/scripts/expire_iot.sh",
       "invoke_always": false,
+      "ttl_grace_period_seconds": 15,
       "environment": {
         "SECURITY_LEVEL": "iot",
         "MAX_CONNECTIONS": "5",

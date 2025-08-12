@@ -156,11 +156,44 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         .stat-box { background: #007acc; color: white; padding: 15px; border-radius: 5px; flex: 1; text-align: center; }
         .stat-box h3 { margin: 0; font-size: 24px; }
         .stat-box p { margin: 5px 0 0 0; font-size: 14px; }
+        
+        /* View Toggle Buttons */
+        .view-toggle { margin: 20px 0; text-align: center; }
+        .view-btn { background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 0 5px; }
+        .view-btn.active { background: #007acc; }
+        .view-btn:hover { background: #5a6268; }
+        .view-btn.active:hover { background: #0056b3; }
+        
+        /* Client-grouped view styles */
+        .client-section { margin-bottom: 30px; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
+        .client-header { background: #f8f9fa; padding: 15px; border-bottom: 1px solid #ddd; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .client-header:hover { background: #e9ecef; }
+        .client-header h3 { margin: 0; color: #495057; }
+        .client-stats { display: flex; gap: 15px; align-items: center; font-size: 14px; color: #6c757d; }
+        .client-badge { background: #007acc; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        .collapse-icon { font-size: 18px; color: #6c757d; transition: transform 0.3s; }
+        .client-section.collapsed .collapse-icon { transform: rotate(-90deg); }
+        .client-rules { background: white; }
+        .client-section.collapsed .client-rules { display: none; }
+        
+        /* Traditional table styles */
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
         th { background-color: #f2f2f2; font-weight: bold; }
         tr:hover { background-color: #f9f9f9; }
-        .delete-btn { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; }
+        .client-rules table { margin-top: 0; }
+        .client-rules th { background-color: #fff; font-size: 14px; padding: 10px 12px; }
+        
+        /* Compact rule styles for client view */
+        .rule-row { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        .rule-row:hover { background-color: #f8f9fa; }
+        .rule-info { flex: 1; }
+        .rule-primary { font-weight: bold; color: #333; margin-bottom: 4px; }
+        .rule-secondary { font-size: 13px; color: #666; }
+        .rule-meta { font-size: 12px; color: #999; margin-top: 4px; }
+        .rule-actions { display: flex; gap: 8px; }
+        
+        .delete-btn { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; }
         .delete-btn:hover { background: #c82333; }
         .refresh-btn { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-bottom: 20px; }
         .refresh-btn:hover { background: #218838; }
@@ -168,6 +201,11 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         .error { color: #dc3545; text-align: center; padding: 20px; }
         .domain { word-break: break-all; max-width: 200px; }
         .ttl { font-family: monospace; }
+        
+        /* Empty state */
+        .empty-state { text-align: center; padding: 60px 20px; color: #666; }
+        .empty-state h3 { color: #999; margin-bottom: 10px; }
+        .empty-state p { font-size: 14px; line-height: 1.5; }
     </style>
 </head>
 <body>
@@ -183,6 +221,12 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                 <span style="color: #666; margin-right: 10px;">Logged in as: <strong id="currentUser">-</strong></span>
                 <a href="/logout" style="background: #dc3545; color: white; text-decoration: none; padding: 8px 15px; border-radius: 3px; font-size: 14px;">🚪 Logout</a>
             </div>
+        </div>
+        
+        <!-- View Toggle -->
+        <div class="view-toggle">
+            <button class="view-btn active" id="groupedViewBtn" onclick="switchView('grouped')">👥 Grouped by Client</button>
+            <button class="view-btn" id="tableViewBtn" onclick="switchView('table')">📋 Table View</button>
         </div>
         
         <div class="stats" id="stats">
@@ -207,6 +251,12 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         <div id="loading" class="loading">Loading firewall rules...</div>
         <div id="error" class="error" style="display: none;"></div>
         
+        <!-- Grouped View (Default) -->
+        <div id="groupedView" style="display: none;">
+            <div id="clientsContainer"></div>
+        </div>
+        
+        <!-- Traditional Table View -->
         <table id="rulesTable" style="display: none;">
             <thead>
                 <tr>
@@ -276,10 +326,26 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
 
     <script>
         // ASSUMPTION: Use vanilla JavaScript to avoid external dependencies
+        
+        let currentView = 'grouped'; // Default view
+        
+        // Switch between grouped and table views
+        function switchView(view) {
+            currentView = view;
+            
+            // Update button states
+            document.getElementById('groupedViewBtn').className = view === 'grouped' ? 'view-btn active' : 'view-btn';
+            document.getElementById('tableViewBtn').className = view === 'table' ? 'view-btn active' : 'view-btn';
+            
+            // Load data for the selected view
+            loadData();
+        }
+        
         async function loadData() {
             document.getElementById('loading').style.display = 'block';
             document.getElementById('error').style.display = 'none';
             document.getElementById('rulesTable').style.display = 'none';
+            document.getElementById('groupedView').style.display = 'none';
             
             try {
                 // Load statistics
@@ -294,41 +360,11 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                 document.getElementById('uniqueDomains').textContent = stats.unique_domains;
                 document.getElementById('uniqueIPs').textContent = stats.unique_ips;
                 
-                // Load rules
-                const rulesResponse = await fetch('/api/rules');
-                if (!rulesResponse.ok) {
-                    throw new Error('Rules API failed: ' + rulesResponse.status + ' ' + rulesResponse.statusText);
-                }
-                const rules = await rulesResponse.json();
-                
-                const tbody = document.getElementById('rulesBody');
-                tbody.innerHTML = '';
-                
-                if (rules.length === 0) {
-                    // Show a message when no rules exist
-                    const row = document.createElement('tr');
-                    row.innerHTML = '<td colspan="6" style="text-align: center; color: #666; font-style: italic; padding: 40px;">' +
-                        'No firewall rules found. Rules will appear here after DNS queries are processed through dfirewall.' +
-                        '</td>';
-                    tbody.appendChild(row);
+                if (currentView === 'grouped') {
+                    await loadGroupedView();
                 } else {
-                    rules.forEach(rule => {
-                        const row = document.createElement('tr');
-                        row.innerHTML = 
-                            '<td>' + rule.client_ip + '</td>' +
-                            '<td>' + rule.resolved_ip + '</td>' +
-                            '<td class="domain">' + rule.domain + '</td>' +
-                            '<td class="ttl">' + rule.ttl + '</td>' +
-                            '<td>' + new Date(rule.expires_at).toLocaleString() + '</td>' +
-                            '<td>' +
-                                '<button class="delete-btn" onclick="deleteRule(\'' + rule.key + '\')">Delete</button>' +
-                            '</td>';
-                        tbody.appendChild(row);
-                    });
+                    await loadTableView();
                 }
-                
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('rulesTable').style.display = 'table';
                 
             } catch (error) {
                 document.getElementById('loading').style.display = 'none';
@@ -343,6 +379,128 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                 document.getElementById('error').textContent = errorMsg;
                 console.error('Detailed error:', error);
             }
+        }
+        
+        async function loadGroupedView() {
+            // Load grouped rules
+            const rulesResponse = await fetch('/api/rules?grouped=true');
+            if (!rulesResponse.ok) {
+                throw new Error('Grouped Rules API failed: ' + rulesResponse.status + ' ' + rulesResponse.statusText);
+            }
+            const groupedData = await rulesResponse.json();
+            
+            const container = document.getElementById('clientsContainer');
+            container.innerHTML = '';
+            
+            if (groupedData.clients.length === 0) {
+                container.innerHTML = '<div class="empty-state">' +
+                    '<h3>No firewall rules found</h3>' +
+                    '<p>Rules will appear here after DNS queries are processed through dfirewall.<br>' +
+                    'Each client that makes DNS requests will be shown with their associated firewall rules.</p>' +
+                    '</div>';
+            } else {
+                groupedData.clients.forEach(client => {
+                    const clientSection = createClientSection(client);
+                    container.appendChild(clientSection);
+                });
+            }
+            
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('groupedView').style.display = 'block';
+        }
+        
+        async function loadTableView() {
+            // Load traditional flat rules
+            const rulesResponse = await fetch('/api/rules');
+            if (!rulesResponse.ok) {
+                throw new Error('Rules API failed: ' + rulesResponse.status + ' ' + rulesResponse.statusText);
+            }
+            const rules = await rulesResponse.json();
+            
+            const tbody = document.getElementById('rulesBody');
+            tbody.innerHTML = '';
+            
+            if (rules.length === 0) {
+                // Show a message when no rules exist
+                const row = document.createElement('tr');
+                row.innerHTML = '<td colspan="6" style="text-align: center; color: #666; font-style: italic; padding: 40px;">' +
+                    'No firewall rules found. Rules will appear here after DNS queries are processed through dfirewall.' +
+                    '</td>';
+                tbody.appendChild(row);
+            } else {
+                rules.forEach(rule => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = 
+                        '<td>' + rule.client_ip + '</td>' +
+                        '<td>' + rule.resolved_ip + '</td>' +
+                        '<td class="domain">' + rule.domain + '</td>' +
+                        '<td class="ttl">' + rule.ttl + '</td>' +
+                        '<td>' + new Date(rule.expires_at).toLocaleString() + '</td>' +
+                        '<td>' +
+                            '<button class="delete-btn" onclick="deleteRule(\'' + rule.key + '\')">Delete</button>' +
+                        '</td>';
+                    tbody.appendChild(row);
+                });
+            }
+            
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('rulesTable').style.display = 'table';
+        }
+        
+        function createClientSection(client) {
+            const section = document.createElement('div');
+            section.className = 'client-section';
+            section.id = 'client-' + client.client_ip.replace(/[.:]/g, '_');
+            
+            // Create header
+            const header = document.createElement('div');
+            header.className = 'client-header';
+            header.onclick = () => toggleClientSection(section);
+            
+            const headerLeft = document.createElement('div');
+            headerLeft.innerHTML = '<h3>📱 ' + client.client_ip + '</h3>';
+            
+            const headerRight = document.createElement('div');
+            headerRight.className = 'client-stats';
+            headerRight.innerHTML = 
+                '<span class="client-badge">' + client.rule_count + ' rules</span>' +
+                '<span class="ttl-badge" style="background: #17a2b8; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; margin: 0 5px;">TTL+' + client.ttl_grace_period_seconds + 's</span>' +
+                '<span>Last activity: ' + new Date(client.last_updated).toLocaleString() + '</span>' +
+                '<span class="collapse-icon">▼</span>';
+            
+            header.appendChild(headerLeft);
+            header.appendChild(headerRight);
+            section.appendChild(header);
+            
+            // Create rules container
+            const rulesContainer = document.createElement('div');
+            rulesContainer.className = 'client-rules';
+            
+            client.rules.forEach(rule => {
+                const ruleDiv = document.createElement('div');
+                ruleDiv.className = 'rule-row';
+                
+                const ruleInfo = document.createElement('div');
+                ruleInfo.className = 'rule-info';
+                ruleInfo.innerHTML = 
+                    '<div class="rule-primary">' + rule.domain + ' → ' + rule.resolved_ip + '</div>' +
+                    '<div class="rule-secondary">TTL: ' + rule.ttl + 's | Expires: ' + new Date(rule.expires_at).toLocaleString() + '</div>';
+                
+                const ruleActions = document.createElement('div');
+                ruleActions.className = 'rule-actions';
+                ruleActions.innerHTML = '<button class="delete-btn" onclick="deleteRule(\'' + rule.key + '\')">Delete</button>';
+                
+                ruleDiv.appendChild(ruleInfo);
+                ruleDiv.appendChild(ruleActions);
+                rulesContainer.appendChild(ruleDiv);
+            });
+            
+            section.appendChild(rulesContainer);
+            return section;
+        }
+        
+        function toggleClientSection(section) {
+            section.classList.toggle('collapsed');
         }
         
         async function deleteRule(key) {

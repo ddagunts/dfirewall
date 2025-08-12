@@ -30,6 +30,22 @@ type UIStats struct {
 	UniqueIPs     int `json:"unique_ips"`
 }
 
+// ClientRules represents rules grouped by client IP
+type ClientRules struct {
+	ClientIP              string         `json:"client_ip"`
+	RuleCount             int            `json:"rule_count"`
+	Rules                 []FirewallRule `json:"rules"`
+	LastUpdated           time.Time      `json:"last_updated"`
+	TTLGracePeriodSeconds uint32         `json:"ttl_grace_period_seconds"`
+}
+
+// GroupedRulesResponse represents the API response for client-grouped rules
+type GroupedRulesResponse struct {
+	TotalClients int           `json:"total_clients"`
+	TotalRules   int           `json:"total_rules"`
+	Clients      []ClientRules `json:"clients"`
+}
+
 // ClientScriptConfig represents per-client script configuration
 type ClientScriptConfig struct {
 	// Pattern for matching client IPs (supports CIDR notation, single IPs, or regex patterns)
@@ -42,6 +58,8 @@ type ClientScriptConfig struct {
 	InvokeAlways *bool `json:"invoke_always,omitempty"`
 	// Whether to execute scripts synchronously (overrides global SYNC_SCRIPT_EXECUTION)
 	SyncExecution *bool `json:"sync_execution,omitempty"`
+	// TTL grace period in seconds for this client (overrides global TTL_GRACE_PERIOD_SECONDS)
+	TTLGracePeriodSeconds *uint32 `json:"ttl_grace_period_seconds,omitempty"`
 	// Description for documentation purposes
 	Description string `json:"description,omitempty"`
 	// Additional environment variables to set for this client
@@ -54,11 +72,12 @@ type ScriptConfiguration struct {
 	Version string `json:"version"`
 	// Global default settings (fallback when no client-specific config matches)
 	Defaults struct {
-		InvokeScript  string            `json:"invoke_script,omitempty"`
-		ExpireScript  string            `json:"expire_script,omitempty"`
-		InvokeAlways  bool              `json:"invoke_always,omitempty"`
-		SyncExecution bool              `json:"sync_execution,omitempty"`
-		Environment   map[string]string `json:"environment,omitempty"`
+		InvokeScript          string            `json:"invoke_script,omitempty"`
+		ExpireScript          string            `json:"expire_script,omitempty"`
+		InvokeAlways          bool              `json:"invoke_always,omitempty"`
+		SyncExecution         bool              `json:"sync_execution,omitempty"`
+		TTLGracePeriodSeconds uint32            `json:"ttl_grace_period_seconds,omitempty"`
+		Environment           map[string]string `json:"environment,omitempty"`
 	} `json:"defaults"`
 	// Per-client configurations (processed in order - first match wins)
 	Clients []ClientScriptConfig `json:"clients"`

@@ -22,11 +22,12 @@ func TestLoadScriptConfiguration(t *testing.T) {
 			config: &ScriptConfiguration{
 				Version: "1.0",
 				Defaults: struct {
-					InvokeScript  string            `json:"invoke_script,omitempty"`
-					ExpireScript  string            `json:"expire_script,omitempty"`
-					InvokeAlways  bool              `json:"invoke_always,omitempty"`
-					SyncExecution bool              `json:"sync_execution,omitempty"`
-					Environment   map[string]string `json:"environment,omitempty"`
+					InvokeScript          string            `json:"invoke_script,omitempty"`
+					ExpireScript          string            `json:"expire_script,omitempty"`
+					InvokeAlways          bool              `json:"invoke_always,omitempty"`
+					SyncExecution         bool              `json:"sync_execution,omitempty"`
+					TTLGracePeriodSeconds uint32            `json:"ttl_grace_period_seconds,omitempty"`
+					Environment           map[string]string `json:"environment,omitempty"`
 				}{
 					InvokeScript:  "/bin/echo",
 					ExpireScript:  "/bin/echo",
@@ -52,11 +53,12 @@ func TestLoadScriptConfiguration(t *testing.T) {
 			config: &ScriptConfiguration{
 				Version: "1.0",
 				Defaults: struct {
-					InvokeScript  string            `json:"invoke_script,omitempty"`
-					ExpireScript  string            `json:"expire_script,omitempty"`
-					InvokeAlways  bool              `json:"invoke_always,omitempty"`
-					SyncExecution bool              `json:"sync_execution,omitempty"`
-					Environment   map[string]string `json:"environment,omitempty"`
+					InvokeScript          string            `json:"invoke_script,omitempty"`
+					ExpireScript          string            `json:"expire_script,omitempty"`
+					InvokeAlways          bool              `json:"invoke_always,omitempty"`
+					SyncExecution         bool              `json:"sync_execution,omitempty"`
+					TTLGracePeriodSeconds uint32            `json:"ttl_grace_period_seconds,omitempty"`
+					Environment           map[string]string `json:"environment,omitempty"`
 				}{
 					InvokeScript: "/bin/echo",
 				},
@@ -74,11 +76,12 @@ func TestLoadScriptConfiguration(t *testing.T) {
 			config: &ScriptConfiguration{
 				Version: "1.0",
 				Defaults: struct {
-					InvokeScript  string            `json:"invoke_script,omitempty"`
-					ExpireScript  string            `json:"expire_script,omitempty"`
-					InvokeAlways  bool              `json:"invoke_always,omitempty"`
-					SyncExecution bool              `json:"sync_execution,omitempty"`
-					Environment   map[string]string `json:"environment,omitempty"`
+					InvokeScript          string            `json:"invoke_script,omitempty"`
+					ExpireScript          string            `json:"expire_script,omitempty"`
+					InvokeAlways          bool              `json:"invoke_always,omitempty"`
+					SyncExecution         bool              `json:"sync_execution,omitempty"`
+					TTLGracePeriodSeconds uint32            `json:"ttl_grace_period_seconds,omitempty"`
+					Environment           map[string]string `json:"environment,omitempty"`
 				}{},
 				Clients: []ClientScriptConfig{},
 			},
@@ -199,11 +202,12 @@ func TestFindClientConfig(t *testing.T) {
 	testConfig := &ScriptConfiguration{
 		Version: "1.0",
 		Defaults: struct {
-			InvokeScript  string            `json:"invoke_script,omitempty"`
-			ExpireScript  string            `json:"expire_script,omitempty"`
-			InvokeAlways  bool              `json:"invoke_always,omitempty"`
-			SyncExecution bool              `json:"sync_execution,omitempty"`
-			Environment   map[string]string `json:"environment,omitempty"`
+			InvokeScript          string            `json:"invoke_script,omitempty"`
+			ExpireScript          string            `json:"expire_script,omitempty"`
+			InvokeAlways          bool              `json:"invoke_always,omitempty"`
+			SyncExecution         bool              `json:"sync_execution,omitempty"`
+			TTLGracePeriodSeconds uint32            `json:"ttl_grace_period_seconds,omitempty"`
+			Environment           map[string]string `json:"environment,omitempty"`
 		}{
 			InvokeScript: "/default/script",
 			ExpireScript: "/default/expire",

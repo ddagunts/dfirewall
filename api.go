@@ -28,6 +28,14 @@ func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 	
 	ctx := context.Background()
 	
+	// Check if client wants grouped response
+	grouped := r.URL.Query().Get("grouped") == "true"
+	
+	if grouped {
+		handleAPIRulesGrouped(w, r, redisClient)
+		return
+	}
+	
 	// ASSUMPTION: Get all keys matching our pattern "rules:*"
 	keys, err := redisClient.Keys(ctx, "rules:*").Result()
 	if err != nil {
@@ -87,6 +95,111 @@ func handleAPIRules(w http.ResponseWriter, r *http.Request, redisClient *redis.C
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(rules)
+}
+
+// handleAPIRulesGrouped returns firewall rules grouped by client IP
+func handleAPIRulesGrouped(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	ctx := context.Background()
+	
+	// ASSUMPTION: Get all keys matching our pattern "rules:*"
+	keys, err := redisClient.Keys(ctx, "rules:*").Result()
+	if err != nil {
+		http.Error(w, "Error fetching rules: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Group rules by client IP
+	clientRulesMap := make(map[string][]FirewallRule)
+	
+	for _, key := range keys {
+		// Use secure Redis key parsing with validation
+		clientIP, resolvedIP, domain, err := parseRedisKey(key)
+		if err != nil {
+			log.Printf("WARNING: Skipping invalid Redis key %s: %v", key, err)
+			continue
+		}
+		
+		// Additional validation for API display
+		if err := validateRedisKeyComponents(clientIP, resolvedIP, domain); err != nil {
+			log.Printf("WARNING: Skipping potentially malicious Redis key %s: %v", key, err)
+			continue
+		}
+		
+		// Get TTL
+		ttl, err := redisClient.TTL(ctx, key).Result()
+		if err != nil {
+			ttl = -1 // Unknown TTL
+		}
+		
+		// ASSUMPTION: Calculate expiration time based on current time + TTL
+		expiresAt := time.Now().Add(ttl)
+		
+		// QUESTION: How to determine creation time? Not stored in Redis
+		// ASSUMPTION: Use current time minus original TTL as approximation
+		createdAt := time.Now().Add(-ttl)
+		if ttl < 0 {
+			createdAt = time.Now() // Fallback for persistent keys
+		}
+		
+		rule := FirewallRule{
+			Key:        key,
+			ClientIP:   clientIP,
+			ResolvedIP: resolvedIP,
+			Domain:     domain,
+			TTL:        int64(ttl.Seconds()),
+			ExpiresAt:  expiresAt,
+			CreatedAt:  createdAt,
+		}
+		
+		clientRulesMap[clientIP] = append(clientRulesMap[clientIP], rule)
+	}
+	
+	// Convert map to slice and sort
+	clients := make([]ClientRules, 0, len(clientRulesMap))
+	totalRules := 0
+	
+	for clientIP, rules := range clientRulesMap {
+		// Sort rules within each client by expiration time (soonest first)
+		sort.Slice(rules, func(i, j int) bool {
+			return rules[i].ExpiresAt.Before(rules[j].ExpiresAt)
+		})
+		
+		// Find the most recent rule for last updated time
+		lastUpdated := time.Time{}
+		for _, rule := range rules {
+			if rule.CreatedAt.After(lastUpdated) {
+				lastUpdated = rule.CreatedAt
+			}
+		}
+		
+		clientRules := ClientRules{
+			ClientIP:              clientIP,
+			RuleCount:             len(rules),
+			Rules:                 rules,
+			LastUpdated:           lastUpdated,
+			TTLGracePeriodSeconds: getTTLGracePeriodForClient(clientIP),
+		}
+		
+		clients = append(clients, clientRules)
+		totalRules += len(rules)
+	}
+	
+	// Sort clients by rule count (descending) then by IP
+	sort.Slice(clients, func(i, j int) bool {
+		if clients[i].RuleCount != clients[j].RuleCount {
+			return clients[i].RuleCount > clients[j].RuleCount
+		}
+		return clients[i].ClientIP < clients[j].ClientIP
+	})
+	
+	response := GroupedRulesResponse{
+		TotalClients: len(clients),
+		TotalRules:   totalRules,
+		Clients:      clients,
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleAPIStats returns statistics about the firewall rules
@@ -602,8 +715,9 @@ func handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 			{
 				Path:        "/api/rules",  
 				Method:      "GET",
-				Description: "List all active firewall rules with TTL and expiration information",
-				Example:     "curl -X GET http://localhost:8080/api/rules",
+				Description: "List all active firewall rules with TTL and expiration information. Use ?grouped=true for client-grouped format",
+				Parameters:  "grouped: boolean (optional) - Return rules grouped by client IP",
+				Example:     "curl -X GET http://localhost:8080/api/rules\ncurl -X GET 'http://localhost:8080/api/rules?grouped=true'",
 			},
 			{
 				Path:        "/api/rules/delete",

@@ -118,7 +118,7 @@ Optional:
 - `EXPIRE_SCRIPT`: Path to executable script for cleanup when Redis keys expire (global fallback)
 - `SCRIPT_CONFIG`: Path to JSON configuration file for per-client script settings
 - `UPSTREAM_CONFIG`: Path to JSON configuration file for per-client/zone upstream DNS routing
-- `TTL_GRACE_PERIOD_SECONDS`: Grace period added to all DNS TTLs before firewall rules expire (default: 90)
+- `TTL_GRACE_PERIOD_SECONDS`: Default grace period added to all DNS TTLs before firewall rules expire (default: 90). Can be overridden per-client via SCRIPT_CONFIG
 - `BLACKLIST_CONFIG`: Path to JSON configuration file for IP/domain blacklisting
 - `REPUTATION_CONFIG`: Path to JSON configuration file for IP/domain reputation checking
 - `AI_CONFIG`: Path to JSON configuration file for AI-powered threat detection :D
