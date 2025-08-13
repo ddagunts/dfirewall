@@ -27,6 +27,17 @@ type ClientTTLConfig struct {
 	defaults int
 }
 
+type ClientBlacklistConfig struct {
+	networks map[*net.IPNet][]string
+	defaults []string
+}
+
+type ClientWhitelistConfig struct {
+	networks map[*net.IPNet][]string
+	defaults []string
+	enabled  bool
+}
+
 func inRange(ipLow, ipHigh, ip netip.Addr) bool {
 	return ipLow.Compare(ip) <= 0 && ipHigh.Compare(ip) > 0
 }
@@ -41,6 +52,232 @@ func hasEDNSSubnet(r *dns.Msg) bool {
 			}
 		}
 	}
+	return false
+}
+
+func parseClientBlacklistConfig() *ClientBlacklistConfig {
+	config := &ClientBlacklistConfig{
+		networks: make(map[*net.IPNet][]string),
+		defaults: []string{},
+	}
+
+	// Check for default blacklist domains
+	if blacklistEnv := os.Getenv("DOMAIN_BLACKLIST_DEFAULT"); blacklistEnv != "" {
+		domains := strings.Split(blacklistEnv, ",")
+		for i := range domains {
+			domains[i] = strings.TrimSpace(domains[i])
+		}
+		config.defaults = domains
+		log.Printf("DOMAIN_BLACKLIST_DEFAULT is set to: %v", domains)
+	} else {
+		log.Printf("DOMAIN_BLACKLIST_DEFAULT is not set, no default blacklist")
+	}
+
+	// Parse all environment variables that match the pattern DOMAIN_BLACKLIST_*
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "DOMAIN_BLACKLIST_") && !strings.HasSuffix(env, "_DEFAULT") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			
+			key := parts[0]
+			value := parts[1]
+			
+			// Extract network from key 
+			// IPv4: DOMAIN_BLACKLIST_192_168_1_0_24 -> 192.168.1.0/24
+			// IPv6: DOMAIN_BLACKLIST_2001_db8_1__64 -> 2001:db8:1::/64
+			networkPart := strings.TrimPrefix(key, "DOMAIN_BLACKLIST_")
+			var cidr string
+			
+			if strings.Contains(networkPart, "__") {
+				// IPv6 format: 2001_db8_1__64 -> 2001:db8:1::/64
+				parts := strings.Split(networkPart, "__")
+				if len(parts) == 2 {
+					ipv6Part := strings.ReplaceAll(parts[0], "_", ":")
+					cidr = ipv6Part + "::" + "/" + parts[1]
+				}
+			} else {
+				// IPv4 format: 192_168_1_0_24 -> 192.168.1.0/24
+				cidr = strings.ReplaceAll(networkPart, "_", ".")
+				lastDot := strings.LastIndex(cidr, ".")
+				if lastDot > 0 {
+					cidr = cidr[:lastDot] + "/" + cidr[lastDot+1:]
+				}
+			}
+			
+			if _, network, err := net.ParseCIDR(cidr); err == nil {
+				domains := strings.Split(value, ",")
+				for i := range domains {
+					domains[i] = strings.TrimSpace(domains[i])
+				}
+				config.networks[network] = domains
+				log.Printf("Domain blacklist for %s: %v", cidr, domains)
+			} else {
+				log.Printf("Invalid network format for %s: %s", key, cidr)
+			}
+		}
+	}
+	
+	return config
+}
+
+func (config *ClientBlacklistConfig) getBlacklistedDomains(clientIP string) []string {
+	ip := net.ParseIP(clientIP)
+	if ip == nil {
+		return config.defaults
+	}
+	
+	// Check if client IP matches any configured networks
+	for network, domains := range config.networks {
+		if network.Contains(ip) {
+			return domains
+		}
+	}
+	
+	// Return default if no network matches
+	return config.defaults
+}
+
+func (config *ClientBlacklistConfig) isDomainBlacklisted(clientIP string, domain string) bool {
+	blacklistedDomains := config.getBlacklistedDomains(clientIP)
+	domain = strings.TrimSuffix(domain, ".")
+	
+	for _, blacklistedDomain := range blacklistedDomains {
+		blacklistedDomain = strings.TrimSuffix(blacklistedDomain, ".")
+		// Exact match
+		if strings.EqualFold(domain, blacklistedDomain) {
+			return true
+		}
+		// Subdomain match (e.g., blacklisting "example.com" blocks "sub.example.com")
+		if strings.HasSuffix(strings.ToLower(domain), "."+strings.ToLower(blacklistedDomain)) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+func parseClientWhitelistConfig() *ClientWhitelistConfig {
+	config := &ClientWhitelistConfig{
+		networks: make(map[*net.IPNet][]string),
+		defaults: []string{},
+		enabled:  false,
+	}
+
+	// Check if whitelist mode is enabled
+	if whitelistMode := os.Getenv("DOMAIN_WHITELIST_MODE"); whitelistMode != "" {
+		config.enabled = true
+		log.Printf("DOMAIN_WHITELIST_MODE is enabled - all domains blocked by default except whitelisted")
+	}
+
+	// Only parse whitelist configurations if whitelist mode is enabled
+	if !config.enabled {
+		return config
+	}
+
+	// Check for default whitelist domains
+	if whitelistEnv := os.Getenv("DOMAIN_WHITELIST_DEFAULT"); whitelistEnv != "" {
+		domains := strings.Split(whitelistEnv, ",")
+		for i := range domains {
+			domains[i] = strings.TrimSpace(domains[i])
+		}
+		config.defaults = domains
+		log.Printf("DOMAIN_WHITELIST_DEFAULT is set to: %v", domains)
+	} else {
+		log.Printf("DOMAIN_WHITELIST_DEFAULT is not set, no default whitelist")
+	}
+
+	// Parse all environment variables that match the pattern DOMAIN_WHITELIST_*
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "DOMAIN_WHITELIST_") && !strings.HasSuffix(env, "_DEFAULT") && !strings.HasSuffix(env, "_MODE") {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			
+			key := parts[0]
+			value := parts[1]
+			
+			// Extract network from key 
+			// IPv4: DOMAIN_WHITELIST_192_168_1_0_24 -> 192.168.1.0/24
+			// IPv6: DOMAIN_WHITELIST_2001_db8_1__64 -> 2001:db8:1::/64
+			networkPart := strings.TrimPrefix(key, "DOMAIN_WHITELIST_")
+			var cidr string
+			
+			if strings.Contains(networkPart, "__") {
+				// IPv6 format: 2001_db8_1__64 -> 2001:db8:1::/64
+				parts := strings.Split(networkPart, "__")
+				if len(parts) == 2 {
+					ipv6Part := strings.ReplaceAll(parts[0], "_", ":")
+					cidr = ipv6Part + "::" + "/" + parts[1]
+				}
+			} else {
+				// IPv4 format: 192_168_1_0_24 -> 192.168.1.0/24
+				cidr = strings.ReplaceAll(networkPart, "_", ".")
+				lastDot := strings.LastIndex(cidr, ".")
+				if lastDot > 0 {
+					cidr = cidr[:lastDot] + "/" + cidr[lastDot+1:]
+				}
+			}
+			
+			if _, network, err := net.ParseCIDR(cidr); err == nil {
+				domains := strings.Split(value, ",")
+				for i := range domains {
+					domains[i] = strings.TrimSpace(domains[i])
+				}
+				config.networks[network] = domains
+				log.Printf("Domain whitelist for %s: %v", cidr, domains)
+			} else {
+				log.Printf("Invalid network format for %s: %s", key, cidr)
+			}
+		}
+	}
+	
+	return config
+}
+
+func (config *ClientWhitelistConfig) getWhitelistedDomains(clientIP string) []string {
+	if !config.enabled {
+		return []string{}
+	}
+	
+	ip := net.ParseIP(clientIP)
+	if ip == nil {
+		return config.defaults
+	}
+	
+	// Check if client IP matches any configured networks
+	for network, domains := range config.networks {
+		if network.Contains(ip) {
+			return domains
+		}
+	}
+	
+	// Return default if no network matches
+	return config.defaults
+}
+
+func (config *ClientWhitelistConfig) isDomainWhitelisted(clientIP string, domain string) bool {
+	if !config.enabled {
+		return true // If whitelist mode is disabled, allow all domains
+	}
+	
+	whitelistedDomains := config.getWhitelistedDomains(clientIP)
+	domain = strings.TrimSuffix(domain, ".")
+	
+	for _, whitelistedDomain := range whitelistedDomains {
+		whitelistedDomain = strings.TrimSuffix(whitelistedDomain, ".")
+		// Exact match
+		if strings.EqualFold(domain, whitelistedDomain) {
+			return true
+		}
+		// Subdomain match (e.g., whitelisting "example.com" allows "sub.example.com")
+		if strings.HasSuffix(strings.ToLower(domain), "."+strings.ToLower(whitelistedDomain)) {
+			return true
+		}
+	}
+	
 	return false
 }
 
@@ -158,6 +395,12 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 	// Parse per-client TTL configuration
 	ttlConfig := parseClientTTLConfig()
 
+	// Parse per-client domain blacklist configuration  
+	blacklistConfig := parseClientBlacklistConfig()
+
+	// Parse per-client domain whitelist configuration
+	whitelistConfig := parseClientWhitelistConfig()
+
 	ctx := context.Background()
 
 	if redisClient == nil {
@@ -200,6 +443,33 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 
 		if os.Getenv("DEBUG") != "" {
 			log.Printf("Request from client %s:\n%s\n", from, r)
+		}
+
+		// Check domain filtering (blacklist and whitelist) for this client
+		if len(r.Question) > 0 {
+			domain := r.Question[0].Name
+			
+			// Check blacklist first
+			if blacklistConfig.isDomainBlacklisted(from, domain) {
+				log.Printf("Blocked blacklisted domain %s for client %s", domain, from)
+				// Return NXDOMAIN response
+				a := new(dns.Msg)
+				a.SetReply(r)
+				a.SetRcode(r, dns.RcodeNameError)
+				w.WriteMsg(a)
+				return
+			}
+			
+			// Check whitelist (only if whitelist mode is enabled)
+			if !whitelistConfig.isDomainWhitelisted(from, domain) {
+				log.Printf("Blocked non-whitelisted domain %s for client %s", domain, from)
+				// Return NXDOMAIN response
+				a := new(dns.Msg)
+				a.SetReply(r)
+				a.SetRcode(r, dns.RcodeNameError)
+				w.WriteMsg(a)
+				return
+			}
 		}
 		//dnsClient := &dns.Client{Net: "udp"}
 

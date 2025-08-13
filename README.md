@@ -11,6 +11,7 @@ This is a DNS proxy intended to be placed in front of your DNS resolvers/forward
 ## Key Features
 - **Default deny egress policy** - Block outgoing connections by default
 - **DNS-driven firewall rules** - Force clients to perform DNS lookups through the server to gain access
+- **Domain filtering** - Per-client blacklists and whitelists with network-based configuration
 - **Time-limited access** - Allow clients outbound access to resolved IPs with automatic expiration based on TTL
 - **Web UI dashboard** - View and monitor firewall rules through a web interface (port 8080)
 - **IPv6 support** - Optional IPv6 DNS resolution and firewall rules
@@ -30,6 +31,7 @@ ENABLE_EDNS=                # set to any value to enable adding requesting clien
 ENABLE_IPV6=                # set to any value to enable IPv6 support
 DEBUG=                      # set to any value to enable verbose logging
 INVOKE_ALWAYS=              # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered, even if already present in Redis
+DOMAIN_WHITELIST_MODE=      # set to any value to enable whitelist mode (blocks all domains by default)
 ```
 
 ## TTL Padding Configuration
@@ -41,6 +43,45 @@ TTL_PAD_SECONDS_DEFAULT=60                 # Default padding for all clients (de
 TTL_PAD_SECONDS_192_168_1_0_24=120         # IPv4: 192.168.1.0/24 gets 120 seconds
 TTL_PAD_SECONDS_2001_db8_1__64=240         # IPv6: 2001:db8:1::/64 gets 240 seconds
 ```
+
+## Domain Blacklist Configuration
+
+Domain blacklists block DNS resolution for specified domains on a per-client network basis. Blocked domains return NXDOMAIN responses.
+
+```
+DOMAIN_BLACKLIST_DEFAULT=malware.com,ads.example.com     # Default blacklist for all clients
+DOMAIN_BLACKLIST_192_168_1_0_24=social.com,gaming.net   # IPv4: 192.168.1.0/24 blocks these domains
+DOMAIN_BLACKLIST_2001_db8_1__64=streaming.tv,news.org   # IPv6: 2001:db8:1::/64 blocks these domains
+```
+
+Features:
+- Supports exact domain matching (e.g., `example.com`)
+- Supports subdomain blocking (blocking `example.com` also blocks `sub.example.com`)
+- Per-client network configuration using the same CIDR format as TTL padding
+- Comma-separated domain lists
+- Case-insensitive matching
+
+## Domain Whitelist Configuration
+
+Domain whitelists implement a "default deny" policy where ALL domains are blocked by default, allowing only explicitly whitelisted domains. This provides maximum security by blocking everything except approved domains.
+
+```
+DOMAIN_WHITELIST_MODE=1                                    # Enable whitelist mode (blocks all domains by default)
+DOMAIN_WHITELIST_DEFAULT=google.com,github.com             # Default whitelist for all clients
+DOMAIN_WHITELIST_192_168_1_0_24=work.com,company.net      # IPv4: 192.168.1.0/24 allows these domains
+DOMAIN_WHITELIST_2001_db8_1__64=safe.org,trusted.edu      # IPv6: 2001:db8:1::/64 allows these domains
+```
+
+Features:
+- **Default deny policy** - All domains blocked unless explicitly whitelisted
+- **Per-client network configuration** - Different whitelists for different client IP ranges
+- **Exact and subdomain matching** - Whitelisting `example.com` also allows `sub.example.com`
+- **NXDOMAIN responses** - Non-whitelisted domains return proper DNS error responses
+- **Case-insensitive matching** - Works regardless of domain case
+- **Comma-separated lists** - Multiple domains per whitelist entry
+- **Optional mode** - Whitelist only active when `DOMAIN_WHITELIST_MODE` is set
+
+**Note:** Whitelist mode provides stronger security than blacklist mode. When enabled, it blocks ALL domains by default and only allows explicitly approved domains through.
 # Setup on Linux
 
 Start with a minimal Debian install
@@ -296,13 +337,15 @@ As configured above, the firewall doesn't reject traffic from a client **until**
 - add Redis key expiration triggering or a watchdog (to enable non-Linux / non-ipset support)
 - ~~add UI for viewing rules~~ ✅ **COMPLETED**
 - add better configuration options (invoke custom script(s) per client (if exist), etc)
-- add support for checking IP and/or domain against blacklist in Redis (or file)
+- ~~add support for checking IP and/or domain against blacklist in Redis (or file)~~ ✅ **COMPLETED** - Domain blacklist via environment variables
 - add support for checking IP and/or domain against common reputation checkers
 - add support for checking IP and/or domain by executing user-provided pass/fail script
 - add API endpoints for rule management
 - AI integration :D
 
 ## Recent Updates
+- Added per-client domain whitelist functionality with "default deny" security model
+- Added per-client domain blacklist functionality with environment variable configuration
 - Added comprehensive Web UI with client and rule viewing
 - Implemented IPv6 DNS resolution support
 - Enhanced Redis key structure with record type tracking
