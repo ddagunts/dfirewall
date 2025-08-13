@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -36,6 +37,16 @@ type ClientWhitelistConfig struct {
 	networks map[*net.IPNet][]string
 	defaults []string
 	enabled  bool
+}
+
+type HistoricalRule struct {
+	ClientIP    string `json:"client_ip"`
+	ResolvedIP  string `json:"resolved_ip"`
+	Domain      string `json:"domain"`
+	RecordType  string `json:"record_type"`
+	Action      string `json:"action"`
+	Timestamp   int64  `json:"timestamp"`
+	TTL         string `json:"ttl,omitempty"`
 }
 
 func inRange(ipLow, ipHigh, ip netip.Addr) bool {
@@ -365,6 +376,54 @@ func (config *ClientTTLConfig) getTTLPadding(clientIP string) int {
 	return config.defaults
 }
 
+func isClientDomainBlocked(ctx context.Context, redisClient *redis.Client, clientIP, domain string) bool {
+	key := "blocked_domains|" + clientIP
+	blockedDomains, err := redisClient.SMembers(ctx, key).Result()
+	if err != nil {
+		return false
+	}
+	
+	domain = strings.TrimSuffix(domain, ".")
+	
+	for _, blockedDomain := range blockedDomains {
+		blockedDomain = strings.TrimSuffix(blockedDomain, ".")
+		// Exact match
+		if strings.EqualFold(domain, blockedDomain) {
+			return true
+		}
+		// Subdomain match (e.g., blocking "example.com" blocks "sub.example.com")
+		if strings.HasSuffix(strings.ToLower(domain), "."+strings.ToLower(blockedDomain)) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+func recordHistoricalRule(ctx context.Context, redisClient *redis.Client, clientIP, resolvedIP, domain, recordType, action, ttl string) error {
+	if redisClient == nil {
+		return nil
+	}
+
+	historicalRule := HistoricalRule{
+		ClientIP:   clientIP,
+		ResolvedIP: resolvedIP,
+		Domain:     domain,
+		RecordType: recordType,
+		Action:     action,
+		Timestamp:  time.Now().Unix(),
+		TTL:        ttl,
+	}
+
+	data, err := json.Marshal(historicalRule)
+	if err != nil {
+		return err
+	}
+
+	key := fmt.Sprintf("history|%s|%d", clientIP, historicalRule.Timestamp)
+	return redisClient.Set(ctx, key, string(data), 30*24*time.Hour).Err()
+}
+
 func Register(rt Route) error {
 	return RegisterWithRedis(rt, nil)
 }
@@ -449,7 +508,18 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 		if len(r.Question) > 0 {
 			domain := r.Question[0].Name
 			
-			// Check blacklist first
+			// Check Redis-based blocked domains first
+			if redisClient != nil && isClientDomainBlocked(ctx, redisClient, from, domain) {
+				log.Printf("Blocked Redis-blocked domain %s for client %s", domain, from)
+				// Return NXDOMAIN response
+				a := new(dns.Msg)
+				a.SetReply(r)
+				a.SetRcode(r, dns.RcodeNameError)
+				w.WriteMsg(a)
+				return
+			}
+			
+			// Check environment-based blacklist
 			if blacklistConfig.isDomainBlacklisted(from, domain) {
 				log.Printf("Blocked blacklisted domain %s for client %s", domain, from)
 				// Return NXDOMAIN response
@@ -675,6 +745,8 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 						if os.Getenv("DEBUG") != "" {
 							log.Printf("Redis insert: %s", resp)
 						}
+						// Record historical rule creation
+						recordHistoricalRule(ctx, redisClient, from, ipAddress.String(), domain, recordType, "created", newTtlS)
 						// first appearance, invoke custom script
 						if invoke != "" {
 							cmd := exec.Command("/bin/sh", invoke)
@@ -703,6 +775,8 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 						if os.Getenv("DEBUG") != "" {
 							log.Printf("Redis insert: %s", resp)
 						}
+						// Record historical rule update
+						recordHistoricalRule(ctx, redisClient, from, ipAddress.String(), domain, recordType, "updated", newTtlS)
 						if invoke != "" && invoke_always != "" {
 							cmd := exec.Command("/bin/sh", invoke)
 							cmd.Env = append(os.Environ(),
