@@ -24,13 +24,16 @@ services:
     environment:
       #- "PORT=53"  # DNS port
       #- "WEB_PORT=8080"  # Web UI port (default: 8080)
-      - "UPSTREAM=100.64.1.3:53"
+      - "UPSTREAM=1.1.1.1"
       - "REDIS=redis://127.0.0.1:6379"
       - "ENABLE_EDNS=1"
       - "TTL_PAD_SECONDS_DEFAULT=180"
       - "TTL_PAD_SECONDS_192_168_5_120_32=3600"
       - "TTL_PAD_SECONDS_192_168_5_175_32=600"
       - "TTL_PAD_SECONDS_192_168_5_188_32=600"
+      - "ENABLE_SNI_VERIFICATION_192_168_5_134_32=1"
+      - "SNI_PROXY_IP=192.168.5.9"
+      - "SNI_PROXY_PORTS=443"
       #- "DEBUG=1"
       - "INVOKE_SCRIPT=/scripts/invoke_linux_ipset.sh"
       - "INVOKE_ALWAYS=1"

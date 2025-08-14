@@ -17,6 +17,7 @@ This is a DNS proxy intended to be placed in front of your DNS resolvers/forward
 - **IPv6 support** - Optional IPv6 DNS resolution and firewall rules
 - **Redis integration** - Persistent storage of rules and client states
 - **Script execution** - Execute custom scripts when new IP addresses are resolved
+- **TLS SNI verification** - Transparent TCP proxy with SNI header verification for enhanced security
 
 # Configuration
 Configuration is handled through environmental variables. The following variables are available (variables which are unset are OPTIONAL):
@@ -32,6 +33,10 @@ ENABLE_IPV6=                # set to any value to enable IPv6 support
 DEBUG=                      # set to any value to enable verbose logging
 INVOKE_ALWAYS=              # set to any value to enable executing INVOKE_SCRIPT every time an IP address is encountered, even if already present in Redis
 DOMAIN_WHITELIST_MODE=      # set to any value to enable whitelist mode (blocks all domains by default)
+ENABLE_SNI_VERIFICATION=           # set to any value to enable TLS SNI verification proxy globally (legacy)
+ENABLE_SNI_VERIFICATION_DEFAULT=   # set to any value to enable SNI verification by default for all clients
+SNI_PROXY_IP=1.2.3.4               # IP address to use for SNI proxy substitution (default: 1.2.3.4)
+SNI_PROXY_PORTS=443,8443           # comma-separated list of ports for SNI proxy to listen on (default: 443)
 ```
 
 ## TTL Padding Configuration
@@ -82,6 +87,70 @@ Features:
 - **Optional mode** - Whitelist only active when `DOMAIN_WHITELIST_MODE` is set
 
 **Note:** Whitelist mode provides stronger security than blacklist mode. When enabled, it blocks ALL domains by default and only allows explicitly approved domains through.
+
+## Per-Client SNI Verification Configuration
+
+SNI verification can be enabled or disabled on a per-client network basis, similar to TTL padding and domain filtering.
+
+```
+ENABLE_SNI_VERIFICATION_DEFAULT=1                    # Default SNI verification for all clients
+ENABLE_SNI_VERIFICATION_192_168_1_0_24=1             # IPv4: 192.168.1.0/24 has SNI verification enabled
+ENABLE_SNI_VERIFICATION_192_168_2_0_24=0             # IPv4: 192.168.2.0/24 has SNI verification disabled
+ENABLE_SNI_VERIFICATION_2001_db8_1__64=1             # IPv6: 2001:db8:1::/64 has SNI verification enabled
+```
+
+Features:
+- Supports per-client network configuration using CIDR format
+- IPv4 format: `ENABLE_SNI_VERIFICATION_192_168_1_0_24` → 192.168.1.0/24
+- IPv6 format: `ENABLE_SNI_VERIFICATION_2001_db8_1__64` → 2001:db8:1::/64
+- Default behavior controlled by `ENABLE_SNI_VERIFICATION_DEFAULT`
+- Values: any non-empty value (except "0", "false") enables SNI verification
+- Per-network settings override the default setting
+
+## TLS SNI Verification
+
+TLS SNI (Server Name Indication) verification provides an additional layer of security by intercepting TLS connections and verifying that the SNI header matches the originally requested domain.
+
+```
+# Global settings (affects all clients with SNI verification enabled)
+SNI_PROXY_IP=1.2.3.4                        # IP address returned to clients for SNI-verified domains
+SNI_PROXY_PORTS=443,8443,993,995            # Comma-separated list of ports for the SNI proxy to listen on
+
+# Per-client configuration (see Per-Client SNI Verification Configuration above)
+ENABLE_SNI_VERIFICATION_DEFAULT=1            # Enable SNI verification by default
+ENABLE_SNI_VERIFICATION_192_168_1_0_24=1     # Enable for 192.168.1.0/24 network
+ENABLE_SNI_VERIFICATION_192_168_2_0_24=0     # Disable for 192.168.2.0/24 network
+```
+
+### How it works:
+
+1. **Per-Client Check**: For each DNS request, the system checks if SNI verification is enabled for the requesting client's IP
+2. **DNS Response Modification**: When enabled for a client, DNS responses for A records are modified to return the configured `SNI_PROXY_IP` instead of the real IP address
+3. **Connection Interception**: The TLS proxy listens on `SNI_PROXY_IP` for all configured ports and intercepts client connections
+4. **SNI Extraction**: The proxy extracts the SNI header from the TLS ClientHello handshake
+5. **Domain Verification**: The SNI is compared against the originally requested domain stored in Redis
+6. **Traffic Forwarding**: If SNI matches, traffic is transparently forwarded to the real destination IP on the same port
+7. **Connection Blocking**: If SNI doesn't match or is missing, the connection is dropped
+
+### Benefits:
+
+- **Enhanced Security**: Prevents clients from bypassing DNS-based filtering by connecting directly to IP addresses
+- **Domain Enforcement**: Ensures clients can only access services using their legitimate domain names
+- **TLS Interception Detection**: Blocks connections where SNI has been stripped or modified
+- **Transparent Operation**: No configuration changes required on client devices
+- **Per-Client Control**: Fine-grained control over which client networks have SNI verification enabled
+
+### Example:
+
+1. Client (192.168.1.100) requests DNS for `www.google.com` → resolves to `142.250.191.4`
+2. System checks if SNI verification is enabled for 192.168.1.0/24 network
+3. If enabled, DNS response returns `1.2.3.4` instead of the real IP
+4. Client connects to `1.2.3.4:443` for HTTPS
+5. TLS proxy extracts SNI from ClientHello, verifies it matches `www.google.com`
+6. If valid, proxy forwards connection to real IP `142.250.191.4:443` (same port as intercepted)
+7. Client and server communicate normally through the transparent proxy
+
+If SNI verification is disabled for that client network, the client receives the real IP (142.250.191.4) and connects directly.
 # Setup on Linux
 
 Start with a minimal Debian install

@@ -648,6 +648,22 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 
 				// respond with all records prior to first A record, and first A record
 				ipAddress, _ = netip.ParseAddr(arec.A.String())
+				
+				// Check if TLS SNI verification is enabled for this client and modify IP if needed
+				if tlsProxy != nil && tlsProxy.IsEnabledForClient(from) {
+					domain := r.Question[0].Name
+					substitutedIP := tlsProxy.ModifyDNSResponse(from, domain, arec.A.String())
+					if substitutedIP != arec.A.String() {
+						// Replace the IP in the DNS response
+						if substitutedNet := net.ParseIP(substitutedIP); substitutedNet != nil {
+							arec.A = substitutedNet.To4()
+							if arec.A == nil {
+								arec.A = substitutedNet
+							}
+						}
+					}
+				}
+				
 				A := a.Answer[0 : i+1]
 				a.Answer = A
 				break

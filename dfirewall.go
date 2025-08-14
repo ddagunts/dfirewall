@@ -20,6 +20,7 @@ import (
 )
 
 var routes = []Route{{Zone: "."}}
+var tlsProxy *TLSProxy
 
 func main() {
 	port := 53
@@ -59,6 +60,11 @@ func main() {
 		log.Printf("Redis connection %s", val)
 
 		setupWebUI(redisClient)
+		
+		tlsProxy = NewTLSProxy(redisClient)
+		if err := tlsProxy.Start(); err != nil {
+			log.Printf("Failed to start TLS proxy: %v", err)
+		}
 	}
 
 	for i := range routes {
