@@ -157,6 +157,7 @@ Optional:
 - `SNI_INSPECTION_CONFIG`: Path to JSON configuration file for SNI (TLS) inspection and domain fronting detection
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
 - `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support
+- `ENABLE_AAAA_PROCESSING`: Enable/disable IPv6 (AAAA record) processing (default: true, set to "false" or "0" to disable)
 - `DEBUG`: Enable verbose logging
 
 ## Code Organization

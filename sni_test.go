@@ -2,14 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 // Test SNI configuration loading and validation
@@ -102,10 +100,14 @@ func TestLoadSNIInspectionConfiguration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create temporary config file
-			tmpFile := createTempFile(t, tt.configJSON)
-			defer removeTempFile(tmpFile)
+			tempDir := t.TempDir()
+			configFile := tempDir + "/sni_config.json"
+			err := os.WriteFile(configFile, []byte(tt.configJSON), 0644)
+			if err != nil {
+				t.Fatalf("Failed to write config file: %v", err)
+			}
 
-			config, err := loadSNIInspectionConfiguration(tmpFile)
+			config, err := loadSNIInspectionConfiguration(configFile)
 
 			if tt.expectError {
 				if err == nil {

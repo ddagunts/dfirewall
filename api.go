@@ -898,6 +898,7 @@ func handleAPIConfigStatus(w http.ResponseWriter, r *http.Request, redisClient *
 			"DEBUG":                  os.Getenv("DEBUG"),
 			"HANDLE_ALL_IPS":         os.Getenv("HANDLE_ALL_IPS"),
 			"ENABLE_EDNS":            os.Getenv("ENABLE_EDNS"),
+			"ENABLE_AAAA_PROCESSING": os.Getenv("ENABLE_AAAA_PROCESSING"),
 			"INVOKE_SCRIPT":          os.Getenv("INVOKE_SCRIPT"),
 			"INVOKE_ALWAYS":          os.Getenv("INVOKE_ALWAYS"),
 			"EXPIRE_SCRIPT":          os.Getenv("EXPIRE_SCRIPT"),

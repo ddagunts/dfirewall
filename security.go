@@ -2053,6 +2053,27 @@ func validateForShellExecution(input, inputType string) error {
 	return nil
 }
 
+// isNullRouteAddress checks if an IP address is a null route (0.0.0.0 or ::)
+// that would bypass firewall rules and should be ignored
+func isNullRouteAddress(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	
+	// Check for IPv4 null route (0.0.0.0)
+	if parsed.To4() != nil && parsed.Equal(net.IPv4zero) {
+		return true
+	}
+	
+	// Check for IPv6 null route (::)
+	if parsed.To4() == nil && parsed.Equal(net.IPv6zero) {
+		return true
+	}
+	
+	return false
+}
+
 // validateIPForExecution validates IP addresses for shell execution
 func validateIPForExecution(ip string) bool {
 	// Must be a valid IPv4 or IPv6 address

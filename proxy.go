@@ -215,6 +215,12 @@ func Register(rt Route) error {
 	// HANDLE_ALL_IPS: when set, process all A records instead of just the first one
 	handleAllIPs := os.Getenv("HANDLE_ALL_IPS")
 
+	// ENABLE_AAAA_PROCESSING: when set to "false" or "0", disable AAAA (IPv6) record processing
+	enableAAAA := os.Getenv("ENABLE_AAAA_PROCESSING")
+	if enableAAAA == "" {
+		enableAAAA = "true" // Default to enabled for backward compatibility
+	}
+
 	// TTL_GRACE_PERIOD_SECONDS: configurable grace period added to all DNS TTLs (default: 90 seconds)
 	if gracePeriodEnv := os.Getenv("TTL_GRACE_PERIOD_SECONDS"); gracePeriodEnv != "" {
 		if parsed, err := strconv.ParseUint(gracePeriodEnv, 10, 32); err == nil {
@@ -722,6 +728,15 @@ func Register(rt Route) error {
 		for _, rr := range resp.Answer {
 			if rrType, ok := rr.(*dns.A); ok {
 				resolvedIP := rrType.A.String()
+				
+				// SECURITY FIX: Ignore null route addresses (0.0.0.0) that would bypass firewall
+				if isNullRouteAddress(resolvedIP) {
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("SECURITY: Ignoring null route address %s for domain %s - would bypass firewall", resolvedIP, requestedDomain)
+					}
+					continue
+				}
+				
 				// SECURITY FIX: Use originally requested domain, not resolved domain from DNS answer
 				// This prevents CNAME-based blacklist bypass (e.g., www.ebay.com -> ebay.map.fastly.net)
 				domain := requestedDomain
@@ -861,9 +876,18 @@ func Register(rt Route) error {
 				if handleAllIPs == "" {
 					break
 				}
-			} else if rrType, ok := rr.(*dns.AAAA); ok {
+			} else if rrType, ok := rr.(*dns.AAAA); ok && enableAAAA != "false" && enableAAAA != "0" {
 				// Handle IPv6 records similarly
 				resolvedIPv6 := rrType.AAAA.String()
+				
+				// SECURITY FIX: Ignore null route addresses (::) that would bypass firewall
+				if isNullRouteAddress(resolvedIPv6) {
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("SECURITY: Ignoring null route address %s for domain %s - would bypass firewall", resolvedIPv6, requestedDomain)
+					}
+					continue
+				}
+				
 				// SECURITY FIX: Use originally requested domain, not resolved domain from DNS answer
 				// This prevents CNAME-based blacklist bypass (e.g., www.ebay.com -> ebay.map.fastly.net)
 				domain := requestedDomain
