@@ -28,11 +28,12 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 
 1. **DNS Interception**: Client DNS requests → dfirewall:53 → upstream resolver
 2. **Data Processing**: DNS responses → IP/domain extraction → Redis storage with TTL
-3. **SNI Inspection**: If enabled, return proxy IP instead of real IP → track DNS mapping → intercept TLS connections → validate SNI headers
-4. **Security Pipeline**: IPs/domains → blacklist check → reputation check → AI analysis → custom scripts
-5. **Firewall Integration**: Validated IPs → script execution → iptables/ipset rules → client access
-6. **Log Collection**: Remote/local log files → regex extraction → security pipeline → firewall rules
-7. **Expiration**: Redis TTL expires → expire script → cleanup firewall rules
+3. **Historical Tracking**: Each DNS lookup → client history storage in Redis sorted sets → time-based indexing for efficient querying
+4. **SNI Inspection**: If enabled, return proxy IP instead of real IP → track DNS mapping → intercept TLS connections → validate SNI headers
+5. **Security Pipeline**: IPs/domains → blacklist check → reputation check → AI analysis → custom scripts
+6. **Firewall Integration**: Validated IPs → script execution → iptables/ipset rules → client access
+7. **Log Collection**: Remote/local log files → regex extraction → security pipeline → firewall rules
+8. **Expiration**: Redis TTL expires → expire script → cleanup firewall rules
 
 ### Key Features
 
@@ -40,6 +41,7 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 - **Per-client and per-zone upstream resolver routing with priority-based selection**
 - **SNI (Server Name Indication) inspection with TLS connection interception to detect domain fronting and DNS abuse**
 - Redis storage for tracking client IP → resolved IP → domain mappings with TTL expiration
+- **Comprehensive historical DNS lookup tracking with per-client query history, time-range filtering, and automatic data retention management**
 - Dynamic firewall rule creation via executable scripts
 - Per-client script configuration with pattern matching (IP, CIDR, regex)
 - IP and domain blacklisting with Redis and file-based support
@@ -48,7 +50,7 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 - Custom script integration for user-provided pass/fail validation with unified/separate scripts, caching, and retry logic
 - Redis key expiration monitoring with cleanup scripts (enables non-Linux/non-ipset support)
 - **Log collection from remote and local sources via SSH and local file monitoring with regex pattern matching for IP/domain extraction**
-- Web-based UI for viewing and managing firewall rules
+- Web-based UI for viewing and managing firewall rules with historical query analysis
 - Support for both UDP and TCP DNS protocols
 - Support for both IPv4 (A records) and IPv6 (AAAA records)
 - Client IP detection and per-client rule management
@@ -124,6 +126,7 @@ Optional:
 - `SCRIPT_CONFIG`: Path to JSON configuration file for per-client script settings
 - `UPSTREAM_CONFIG`: Path to JSON configuration file for per-client/zone upstream DNS routing
 - `TTL_GRACE_PERIOD_SECONDS`: Default grace period added to all DNS TTLs before firewall rules expire (default: 90). Can be overridden per-client via SCRIPT_CONFIG
+- `HISTORY_RETENTION_DAYS`: Number of days to retain client DNS lookup history (default: 30). Historical data is stored in Redis sorted sets with automatic expiration
 - `BLACKLIST_CONFIG`: Path to JSON configuration file for IP/domain blacklisting
 - `REPUTATION_CONFIG`: Path to JSON configuration file for IP/domain reputation checking
 - `AI_CONFIG`: Path to JSON configuration file for AI-powered threat detection :D
@@ -189,8 +192,10 @@ Optional:
 - TLS/HTTPS support for web UI with certificate management
 
 ### Data Flow Patterns
-- Redis keys use format: `rules:clientIP|resolvedIP|domain` (pipe-separated for IPv6 safety)
+- **Firewall Rules**: Redis keys use format: `rules:clientIP|resolvedIP|domain` (pipe-separated for IPv6 safety)
+- **Historical Data**: Redis sorted sets use format: `history:client:{clientIP}` with Unix timestamp scoring for efficient time-range queries
 - TTL inheritance: DNS TTL → Redis TTL → firewall rule TTL (clamped to 3600s max)
+- **History Retention**: Configurable automatic expiration (default: 30 days) with background cleanup
 - Script execution: configurable sync/async with validation, timeout (30s), and environment variables
 - Error handling: graceful degradation, structured logging, continue on non-critical failures
 - CNAME security: Uses originally requested domain for blacklist checks, not resolved CNAME target
@@ -312,6 +317,7 @@ Set `UPSTREAM_CONFIG` environment variable to a JSON configuration file:
 
 ### Redis Key Patterns
 - Firewall rules: `rules:clientIP|resolvedIP|domain`
+- **Client DNS history**: `history:client:{clientIP}` (Redis sorted sets with Unix timestamp scores)
 - Blacklists: `dfirewall:blacklist:ips`, `dfirewall:blacklist:domains` (Redis sets)
 - Log collector stats: `logcollector:stats:*`
 - AI cache: `ai:cache:*`
@@ -341,6 +347,14 @@ The Web UI provides a comprehensive REST API for managing firewall rules and sec
 - `/api/health` - System health status
 - `/api/docs` - API documentation
 - `/api/config/status` - Configuration status (with credential sanitization)
+
+### Historical Query Management APIs
+- `/api/client/history/{clientIP}` - Get comprehensive historical DNS lookups for a specific client
+  - **Time Range Filtering**: Query by start/end timestamps or relative time periods (1 day, 3 days, 7 days, 30 days)
+  - **Result Limiting**: Configurable result limits (100, 500, 1000, 5000 lookups)
+  - **Data Format**: Returns structured data with timestamp, domain, resolved IPs, and TTL information
+  - **Automatic Retention**: Historical data automatically expires based on `HISTORY_RETENTION_DAYS` (default: 30 days)
+  - **Performance Optimized**: Uses Redis sorted sets with time-based scoring for efficient range queries
 
 ### Security Management APIs
 - `/api/blacklist/ip/add` - Add IP to blacklist

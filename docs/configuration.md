@@ -50,6 +50,12 @@ REDIS_WRITE_TIMEOUT=3s        # write operation timeout
 REDIS_POOL_SIZE=10            # connection pool size
 ```
 
+### Historical Data Configuration
+```bash
+HISTORY_RETENTION_DAYS=30     # number of days to retain client DNS lookup history (default: 30)
+                              # Historical data stored in Redis sorted sets for security analysis and forensic investigation
+```
+
 ### Script Configuration
 ```bash
 INVOKE_SCRIPT=                # path of an executable for firewall management (global fallback)

@@ -102,6 +102,67 @@ func addGracePeriodForClient(originalTTL uint32, clientIP string) uint32 {
 	return originalTTL + ttlGracePeriodSeconds
 }
 
+// trackHistoricalLookup stores a DNS lookup in the client's historical lookup record
+// Uses a Redis sorted set to maintain chronological order with efficient range queries
+func trackHistoricalLookup(clientIP, domain, resolvedIP string, ttl uint32, redisClient *redis.Client) {
+	// Validate inputs first
+	if !validateIP(clientIP) || !validateDomain(domain) || !validateIP(resolvedIP) {
+		if os.Getenv("DEBUG") != "" {
+			log.Printf("WARNING: Invalid parameters for historical lookup: clientIP=%s, domain=%s, resolvedIP=%s", 
+				clientIP, domain, resolvedIP)
+		}
+		return
+	}
+
+	ctx := context.Background()
+	historyKey := fmt.Sprintf("history:client:%s", clientIP)
+	
+	// Create historical lookup entry
+	lookup := HistoricalLookup{
+		Domain:     domain,
+		ResolvedIP: resolvedIP,
+		Timestamp:  time.Now(),
+		TTL:        int64(ttl),
+	}
+	
+	// Serialize to JSON
+	lookupJSON, err := json.Marshal(lookup)
+	if err != nil {
+		log.Printf("Error serializing historical lookup: %v", err)
+		return
+	}
+	
+	// Store in sorted set with timestamp as score (enables chronological queries)
+	timestamp := float64(lookup.Timestamp.Unix())
+	err = redisClient.ZAdd(ctx, historyKey, redis.Z{
+		Score:  timestamp,
+		Member: string(lookupJSON),
+	}).Err()
+	
+	if err != nil {
+		log.Printf("Error storing historical lookup for %s: %v", clientIP, err)
+		return
+	}
+	
+	// Set expiration on the history key (default 30 days)
+	historyRetentionDays := 30
+	if retentionEnv := os.Getenv("HISTORY_RETENTION_DAYS"); retentionEnv != "" {
+		if days, err := strconv.Atoi(retentionEnv); err == nil && days > 0 {
+			historyRetentionDays = days
+		}
+	}
+	
+	// Extend expiration each time we add an entry
+	err = redisClient.Expire(ctx, historyKey, time.Duration(historyRetentionDays)*24*time.Hour).Err()
+	if err != nil {
+		log.Printf("Error setting expiration for history key %s: %v", historyKey, err)
+	}
+	
+	if os.Getenv("DEBUG") != "" {
+		log.Printf("Tracked historical lookup: %s -> %s (%s) for client %s", domain, resolvedIP, lookup.Timestamp.Format(time.RFC3339), clientIP)
+	}
+}
+
 // selectUpstreamResolver determines which upstream resolver to use based on client IP and domain
 // Priority: client-specific rules > zone-specific rules > default upstream
 func selectUpstreamResolver(clientIP, domain, defaultUpstream string, upstreamConfig *UpstreamConfig) string {
@@ -783,6 +844,9 @@ func Register(rt Route) error {
 					}
 				}
 
+				// Track historical lookup for client
+				trackHistoricalLookup(from, domain, resolvedIP, rrType.Hdr.Ttl, redisClient)
+
 				// Update traffic patterns for AI analysis
 				if aiConfig != nil && aiConfig.Enabled && aiConfig.TrafficAnomalies {
 					updateTrafficPattern(from, domain, resolvedIP)
@@ -887,6 +951,9 @@ func Register(rt Route) error {
 						log.Printf("Stored IPv6 rule in Redis: %s (DNS TTL: %d, Redis TTL: %d seconds)", key, rrType.Hdr.Ttl, ttlWithGrace)
 					}
 				}
+
+				// Track historical lookup for client (IPv6)
+				trackHistoricalLookup(from, domain, resolvedIPv6, rrType.Hdr.Ttl, redisClient)
 
 				if invoke != "" || scriptConfig != nil {
 					executeScript(from, resolvedIPv6, domain, ttl, "ALLOW", isNewRule)

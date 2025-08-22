@@ -46,6 +46,23 @@ type GroupedRulesResponse struct {
 	Clients      []ClientRules `json:"clients"`
 }
 
+// HistoricalLookup represents a single historical DNS lookup entry
+type HistoricalLookup struct {
+	Domain     string    `json:"domain"`
+	ResolvedIP string    `json:"resolved_ip"`
+	Timestamp  time.Time `json:"timestamp"`
+	TTL        int64     `json:"ttl,omitempty"`
+}
+
+// ClientHistoryResponse represents the API response for client lookup history
+type ClientHistoryResponse struct {
+	ClientIP     string             `json:"client_ip"`
+	TotalLookups int                `json:"total_lookups"`
+	Lookups      []HistoricalLookup `json:"lookups"`
+	StartTime    time.Time          `json:"start_time"`
+	EndTime      time.Time          `json:"end_time"`
+}
+
 // ClientScriptConfig represents per-client script configuration
 type ClientScriptConfig struct {
 	// Pattern for matching client IPs (supports CIDR notation, single IPs, or regex patterns)

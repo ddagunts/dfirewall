@@ -14,17 +14,29 @@
     {
       "client_pattern": "192.168.5.120/32",
       "description": "Alexa",
-      "ttl_grace_period_seconds": 3600
+      "ttl_grace_period_seconds": 1800,
+      "invoke_script": "/scripts/invoke_linux_ipset.sh",
+      "expire_script": "/scripts/expire_generic.sh",
+      "invoke_always": true,
+      "sync_execution": true
     },
     {
       "client_pattern": "192.168.5.175/32",
       "description": "Alexa",
-      "ttl_grace_period_seconds": 3600
+      "ttl_grace_period_seconds": 1800,
+      "invoke_script": "/scripts/invoke_linux_ipset.sh",
+      "expire_script": "/scripts/expire_generic.sh",
+      "invoke_always": true,
+      "sync_execution": true
     },
     {
       "client_pattern": "192.168.5.188/32",
       "description": "Alexa",
-      "ttl_grace_period_seconds": 3600
+      "ttl_grace_period_seconds": 1800,
+      "invoke_script": "/scripts/invoke_linux_ipset.sh",
+      "expire_script": "/scripts/expire_generic.sh",
+      "invoke_always": true,
+      "sync_execution": true
     }
   ]
 }

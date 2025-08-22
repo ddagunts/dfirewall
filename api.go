@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1179,6 +1180,115 @@ func handleAPISNIValidate(w http.ResponseWriter, r *http.Request, redisClient *r
 		"is_valid":          isValid,
 		"would_be_blocked":  useSNIInspection && !isValid && sniInspectionConfig.StrictValidation && !sniInspectionConfig.LogOnly,
 		"timestamp":         time.Now(),
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleAPIClientHistory returns historical DNS lookups for a specific client IP
+func handleAPIClientHistory(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Content-Type", "application/json")
+
+	// Extract client IP from URL path
+	// Expected format: /api/client/history/{clientIP}
+	pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	if len(pathParts) < 4 || pathParts[3] == "" {
+		http.Error(w, "Client IP is required in URL path", http.StatusBadRequest)
+		return
+	}
+	
+	clientIP := pathParts[3]
+	
+	// Validate client IP
+	if !validateIP(clientIP) {
+		http.Error(w, "Invalid client IP address", http.StatusBadRequest)
+		return
+	}
+
+	ctx := context.Background()
+	historyKey := fmt.Sprintf("history:client:%s", clientIP)
+
+	// Parse query parameters for filtering
+	query := r.URL.Query()
+	
+	// Time range parameters (optional)
+	var startTime, endTime time.Time
+	if startStr := query.Get("start"); startStr != "" {
+		if t, err := time.Parse(time.RFC3339, startStr); err == nil {
+			startTime = t
+		}
+	}
+	if endStr := query.Get("end"); endStr != "" {
+		if t, err := time.Parse(time.RFC3339, endStr); err == nil {
+			endTime = t
+		}
+	}
+
+	// Set defaults if not provided
+	if startTime.IsZero() {
+		startTime = time.Now().AddDate(0, 0, -30) // Default: last 30 days
+	}
+	if endTime.IsZero() {
+		endTime = time.Now()
+	}
+
+	// Limit parameter (default 1000)
+	limit := int64(1000)
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if l, err := strconv.ParseInt(limitStr, 10, 64); err == nil && l > 0 && l <= 10000 {
+			limit = l
+		}
+	}
+
+	// Query Redis sorted set by score range (timestamp)
+	startScore := float64(startTime.Unix())
+	endScore := float64(endTime.Unix())
+	
+	members, err := redisClient.ZRevRangeByScore(ctx, historyKey, &redis.ZRangeBy{
+		Min:    fmt.Sprintf("%f", startScore),
+		Max:    fmt.Sprintf("%f", endScore),
+		Count:  limit,
+	}).Result()
+	
+	if err != nil {
+		if err == redis.Nil {
+			// No historical data found - return empty response
+			response := ClientHistoryResponse{
+				ClientIP:     clientIP,
+				TotalLookups: 0,
+				Lookups:      []HistoricalLookup{},
+				StartTime:    startTime,
+				EndTime:      endTime,
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+		http.Error(w, "Error fetching client history: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Parse JSON entries
+	lookups := make([]HistoricalLookup, 0, len(members))
+	for _, member := range members {
+		var lookup HistoricalLookup
+		if err := json.Unmarshal([]byte(member), &lookup); err != nil {
+			log.Printf("WARNING: Error unmarshaling historical lookup entry: %v", err)
+			continue
+		}
+		lookups = append(lookups, lookup)
+	}
+
+	// Build response
+	response := ClientHistoryResponse{
+		ClientIP:     clientIP,
+		TotalLookups: len(lookups),
+		Lookups:      lookups,
+		StartTime:    startTime,
+		EndTime:      endTime,
 	}
 
 	json.NewEncoder(w).Encode(response)

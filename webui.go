@@ -121,6 +121,11 @@ func startWebUI(port string, redisClient *redis.Client) {
 		handleAPISNIValidate(w, r, redisClient)
 	}))
 	
+	// Client history endpoints
+	mux.HandleFunc("/api/client/history/", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
+		handleAPIClientHistory(w, r, redisClient)
+	}))
+	
 	server := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux, // Use our custom ServeMux instead of default
@@ -250,6 +255,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                 <button class="top-nav-btn refresh" onclick="loadData()">🔄 Refresh Data</button>
                 <a href="/api/docs" target="_blank" class="top-nav-btn">📖 API Documentation</a>
                 <button class="top-nav-btn" onclick="toggleSettings()">⚙️ Settings</button>
+                <button class="top-nav-btn" onclick="toggleClientHistory()">📊 Client History</button>
                 <button class="view-btn active" id="groupedViewBtn" onclick="switchView('grouped')">👥 Grouped by Client</button>
                 <button class="view-btn" id="tableViewBtn" onclick="switchView('table')">📋 Table View</button>
             </div>
@@ -284,6 +290,66 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                     <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #495057;">Next Refresh:</label>
                     <span id="nextRefresh" style="color: #666; font-family: monospace;">-</span>
                 </div>
+            </div>
+        </div>
+        
+        <!-- Client History Panel -->
+        <div id="clientHistoryPanel" style="display: none; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+            <h3 style="margin: 0 0 15px 0; color: #495057;">📊 Client DNS Lookup History</h3>
+            <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: end; margin-bottom: 20px;">
+                <div>
+                    <label for="clientIPInput" style="display: block; margin-bottom: 5px; font-weight: bold; color: #495057;">Client IP Address:</label>
+                    <input type="text" id="clientIPInput" placeholder="192.168.1.100" style="padding: 8px; border: 1px solid #ddd; border-radius: 3px; width: 150px;">
+                </div>
+                <div>
+                    <label for="historyDays" style="display: block; margin-bottom: 5px; font-weight: bold; color: #495057;">Time Range:</label>
+                    <select id="historyDays" style="padding: 8px; border: 1px solid #ddd; border-radius: 3px; background: white;">
+                        <option value="1">Last 24 hours</option>
+                        <option value="3">Last 3 days</option>
+                        <option value="7">Last 7 days</option>
+                        <option value="30" selected>Last 30 days</option>
+                        <option value="90">Last 90 days</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="historyLimit" style="display: block; margin-bottom: 5px; font-weight: bold; color: #495057;">Limit:</label>
+                    <select id="historyLimit" style="padding: 8px; border: 1px solid #ddd; border-radius: 3px; background: white;">
+                        <option value="100">100 entries</option>
+                        <option value="500">500 entries</option>
+                        <option value="1000" selected>1000 entries</option>
+                        <option value="5000">5000 entries</option>
+                    </select>
+                </div>
+                <button onclick="loadClientHistory()" style="background: #007acc; color: white; border: none; padding: 8px 20px; border-radius: 3px; cursor: pointer;">🔍 Search</button>
+            </div>
+            
+            <!-- History Results -->
+            <div id="historyResults" style="display: none;">
+                <div id="historyStats" style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 5px; border: 1px solid #ddd;">
+                    <strong>Results: </strong><span id="historyCount">0</span> lookups 
+                    | <strong>Period: </strong><span id="historyPeriod">-</span>
+                </div>
+                <div style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; background: white;">
+                    <table style="width: 100%; margin: 0;">
+                        <thead>
+                            <tr style="background: #f8f9fa;">
+                                <th>Timestamp</th>
+                                <th>Domain</th>
+                                <th>Resolved IP</th>
+                                <th>TTL</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div id="historyLoading" style="display: none; text-align: center; padding: 20px; color: #666;">
+                Loading client history...
+            </div>
+            
+            <div id="historyError" style="display: none; color: #dc3545; text-align: center; padding: 20px;">
             </div>
         </div>
         
@@ -1235,6 +1301,123 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             }
             
             updateRefreshStatus();
+        }
+        
+        // Client History Functions
+        function toggleClientHistory() {
+            const panel = document.getElementById('clientHistoryPanel');
+            if (panel.style.display === 'none' || panel.style.display === '') {
+                panel.style.display = 'block';
+            } else {
+                panel.style.display = 'none';
+                // Clear results when closing
+                document.getElementById('historyResults').style.display = 'none';
+                document.getElementById('historyError').style.display = 'none';
+            }
+        }
+        
+        async function loadClientHistory() {
+            const clientIP = document.getElementById('clientIPInput').value.trim();
+            const days = document.getElementById('historyDays').value;
+            const limit = document.getElementById('historyLimit').value;
+            
+            // Validate client IP
+            if (!clientIP) {
+                showHistoryError('Please enter a client IP address');
+                return;
+            }
+            
+            // Simple IP validation
+            const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+            if (!ipRegex.test(clientIP)) {
+                showHistoryError('Please enter a valid IPv4 address');
+                return;
+            }
+            
+            // Show loading
+            document.getElementById('historyLoading').style.display = 'block';
+            document.getElementById('historyResults').style.display = 'none';
+            document.getElementById('historyError').style.display = 'none';
+            
+            try {
+                // Calculate time range
+                const endTime = new Date();
+                const startTime = new Date();
+                startTime.setDate(endTime.getDate() - parseInt(days));
+                
+                // Build query URL
+                const params = new URLSearchParams({
+                    start: startTime.toISOString(),
+                    end: endTime.toISOString(),
+                    limit: limit
+                });
+                
+                const response = await fetch('/api/client/history/' + encodeURIComponent(clientIP) + '?' + params);
+                
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                }
+                
+                const data = await response.json();
+                displayClientHistory(data);
+                
+            } catch (error) {
+                console.error('Error loading client history:', error);
+                showHistoryError('Failed to load client history: ' + error.message);
+            } finally {
+                document.getElementById('historyLoading').style.display = 'none';
+            }
+        }
+        
+        function displayClientHistory(data) {
+            // Update statistics
+            document.getElementById('historyCount').textContent = data.total_lookups;
+            const startDate = new Date(data.start_time).toLocaleDateString();
+            const endDate = new Date(data.end_time).toLocaleDateString();
+            document.getElementById('historyPeriod').textContent = startDate + ' to ' + endDate;
+            
+            // Clear and populate table
+            const tbody = document.getElementById('historyTableBody');
+            tbody.innerHTML = '';
+            
+            if (data.lookups && data.lookups.length > 0) {
+                data.lookups.forEach(lookup => {
+                    const row = document.createElement('tr');
+                    
+                    // Format timestamp
+                    const timestamp = new Date(lookup.timestamp).toLocaleString();
+                    
+                    // Format TTL
+                    const ttl = lookup.ttl ? lookup.ttl + 's' : '-';
+                    
+                    row.innerHTML = '<td style="font-family: monospace; font-size: 12px;">' + timestamp + '</td>' +
+                        '<td style="word-break: break-all; max-width: 200px;">' + escapeHtml(lookup.domain) + '</td>' +
+                        '<td style="font-family: monospace;">' + escapeHtml(lookup.resolved_ip) + '</td>' +
+                        '<td style="font-family: monospace; text-align: right;">' + ttl + '</td>';
+                    
+                    tbody.appendChild(row);
+                });
+            } else {
+                const row = document.createElement('tr');
+                row.innerHTML = '<td colspan="4" style="text-align: center; color: #666; padding: 20px;">No historical lookups found for this client</td>';
+                tbody.appendChild(row);
+            }
+            
+            // Show results
+            document.getElementById('historyResults').style.display = 'block';
+        }
+        
+        function showHistoryError(message) {
+            document.getElementById('historyError').textContent = message;
+            document.getElementById('historyError').style.display = 'block';
+            document.getElementById('historyResults').style.display = 'none';
+            document.getElementById('historyLoading').style.display = 'none';
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
         
         // Load data on page load
