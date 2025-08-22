@@ -533,5 +533,132 @@ type ConfigStatus struct {
 	LogCollectorConfig *LogCollectorConfig  `json:"log_collector_config,omitempty"`
 	UpstreamConfig     *UpstreamConfig      `json:"upstream_config,omitempty"`
 	Environment        map[string]string    `json:"environment"`
+	SNIInspectionConfig *SNIInspectionConfig `json:"sni_inspection_config,omitempty"`
 	LoadedAt           time.Time            `json:"loaded_at"`
+}
+
+// SNI Inspection Configuration
+
+// SNIInspectionConfig represents SNI (Server Name Indication) inspection configuration
+type SNIInspectionConfig struct {
+	Enabled        bool                      `json:"enabled"`         // Global SNI inspection enable/disable
+	ProxyIPs       []string                  `json:"proxy_ips"`       // IP addresses to return instead of real resolved IPs
+	ProxyPorts     []int                     `json:"proxy_ports"`     // Ports to listen on for SNI interception
+	
+	// TLS Configuration
+	CertFile       string                    `json:"cert_file"`       // Path to TLS certificate for proxy
+	KeyFile        string                    `json:"key_file"`        // Path to TLS private key for proxy
+	
+	// Timeout and Connection Settings
+	ConnectionTimeout int                    `json:"connection_timeout"` // Connection timeout in seconds
+	HandshakeTimeout  int                    `json:"handshake_timeout"`  // TLS handshake timeout in seconds
+	IdleTimeout      int                     `json:"idle_timeout"`       // Idle connection timeout in seconds
+	MaxConnections   int                     `json:"max_connections"`    // Maximum concurrent connections
+	
+	// Per-client and per-domain configurations
+	ClientConfigs    []SNIClientConfig       `json:"client_configs"`     // Client-specific SNI inspection rules
+	DomainConfigs    []SNIDomainConfig       `json:"domain_configs"`     // Domain-specific SNI inspection rules
+	
+	// Validation Settings
+	StrictValidation bool                    `json:"strict_validation"`  // Strict SNI validation (block mismatches)
+	LogOnly         bool                     `json:"log_only"`          // Only log SNI mismatches, don't block
+	
+	// Upstream Connection Settings (for valid SNI matches)
+	UpstreamTimeout int                      `json:"upstream_timeout"`   // Upstream connection timeout in seconds
+	BufferSize      int                      `json:"buffer_size"`        // Buffer size for proxying data
+	
+	// Statistics and Monitoring
+	EnableStats     bool                     `json:"enable_stats"`       // Enable SNI inspection statistics
+	StatsRetention  int                      `json:"stats_retention"`    // Statistics retention period in hours
+}
+
+// SNIClientConfig represents per-client SNI inspection configuration
+type SNIClientConfig struct {
+	ClientPattern   string   `json:"client_pattern"`   // Pattern for matching client IPs (CIDR, exact, or regex)
+	Enabled         bool     `json:"enabled"`          // Enable SNI inspection for this client
+	ProxyIP         string   `json:"proxy_ip"`         // Override proxy IP for this client
+	Description     string   `json:"description,omitempty"` // Description for documentation
+}
+
+// SNIDomainConfig represents per-domain SNI inspection configuration  
+type SNIDomainConfig struct {
+	DomainPattern   string   `json:"domain_pattern"`   // Pattern for matching domains (exact, wildcard, or regex)
+	Enabled         bool     `json:"enabled"`          // Enable SNI inspection for this domain
+	ProxyIP         string   `json:"proxy_ip"`         // Override proxy IP for this domain
+	Description     string   `json:"description,omitempty"` // Description for documentation
+}
+
+// SNIConnection represents an active SNI inspection connection
+type SNIConnection struct {
+	ConnectionID    string    `json:"connection_id"`    // Unique connection identifier
+	ClientIP        string    `json:"client_ip"`        // Client IP address
+	ProxyPort       int       `json:"proxy_port"`       // Port client connected to
+	RequestedDomain string    `json:"requested_domain"` // Domain from original DNS request
+	SNIDomain       string    `json:"sni_domain"`       // Domain from SNI header
+	IsValid         bool      `json:"is_valid"`         // Whether SNI matches requested domain
+	StartTime       time.Time `json:"start_time"`       // Connection start time
+	LastActivity    time.Time `json:"last_activity"`    // Last activity timestamp
+	BytesUpstream   int64     `json:"bytes_upstream"`   // Bytes sent to upstream server
+	BytesDownstream int64     `json:"bytes_downstream"` // Bytes sent back to client
+	Status          string    `json:"status"`           // Connection status (connecting, active, blocked, closed)
+}
+
+// SNIInspectionStats represents SNI inspection statistics
+type SNIInspectionStats struct {
+	TotalConnections    int64                    `json:"total_connections"`     // Total connections processed
+	ValidConnections    int64                    `json:"valid_connections"`     // Connections with valid SNI
+	InvalidConnections  int64                    `json:"invalid_connections"`   // Connections with invalid SNI
+	BlockedConnections  int64                    `json:"blocked_connections"`   // Connections blocked due to SNI mismatch
+	ActiveConnections   int                      `json:"active_connections"`    // Currently active connections
+	
+	// Per-client statistics
+	ClientStats        map[string]*ClientSNIStats `json:"client_stats"`         // Statistics by client IP
+	
+	// Per-domain statistics
+	DomainStats        map[string]*DomainSNIStats `json:"domain_stats"`         // Statistics by domain
+	
+	// Temporal statistics
+	LastHourConnections int64                     `json:"last_hour_connections"` // Connections in last hour
+	Last24HourConnections int64                   `json:"last_24h_connections"`   // Connections in last 24 hours
+	
+	// Error statistics
+	TLSErrors          int64                     `json:"tls_errors"`            // TLS handshake errors
+	TimeoutErrors      int64                     `json:"timeout_errors"`        // Connection timeout errors
+	
+	StartTime          time.Time                 `json:"start_time"`            // When statistics collection started
+	LastUpdated        time.Time                 `json:"last_updated"`          // Last statistics update
+}
+
+// ClientSNIStats represents SNI statistics for a specific client
+type ClientSNIStats struct {
+	ClientIP           string    `json:"client_ip"`
+	TotalConnections   int64     `json:"total_connections"`
+	ValidConnections   int64     `json:"valid_connections"`
+	InvalidConnections int64     `json:"invalid_connections"`
+	BlockedConnections int64     `json:"blocked_connections"`
+	LastConnection     time.Time `json:"last_connection"`
+	FirstConnection    time.Time `json:"first_connection"`
+}
+
+// DomainSNIStats represents SNI statistics for a specific domain
+type DomainSNIStats struct {
+	Domain             string    `json:"domain"`
+	TotalConnections   int64     `json:"total_connections"`
+	ValidConnections   int64     `json:"valid_connections"`
+	InvalidConnections int64     `json:"invalid_connections"`
+	BlockedConnections int64     `json:"blocked_connections"`
+	LastConnection     time.Time `json:"last_connection"`
+	FirstConnection    time.Time `json:"first_connection"`
+}
+
+// SNIMismatchEvent represents an SNI validation mismatch event
+type SNIMismatchEvent struct {
+	EventID         string    `json:"event_id"`         // Unique event identifier
+	Timestamp       time.Time `json:"timestamp"`        // When the mismatch occurred
+	ClientIP        string    `json:"client_ip"`        // Client IP address
+	RequestedDomain string    `json:"requested_domain"` // Domain from DNS request
+	SNIDomain       string    `json:"sni_domain"`       // Domain from SNI header
+	ProxyPort       int       `json:"proxy_port"`       // Port connection was made to
+	Action          string    `json:"action"`           // Action taken (logged, blocked)
+	ConnectionID    string    `json:"connection_id"`    // Associated connection ID
 }

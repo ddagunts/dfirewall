@@ -85,12 +85,14 @@ BLACKLIST_CONFIG=             # path to JSON configuration file for IP/domain bl
 REPUTATION_CONFIG=            # path to JSON configuration file for IP/domain reputation checking
 AI_CONFIG=                    # path to JSON configuration file for AI-powered threat detection
 CUSTOM_SCRIPT_CONFIG=         # path to JSON configuration file for user-provided pass/fail scripts
+SNI_INSPECTION_CONFIG=        # path to JSON configuration file for SNI inspection and domain fronting detection
 ```
 
 **📖 For detailed security configuration, see:**
 - [docs/blacklist-configuration.md](docs/blacklist-configuration.md)
 - [docs/reputation-checking.md](docs/reputation-checking.md)
 - [docs/ai-threat-detection.md](docs/ai-threat-detection.md)
+- [docs/sni-inspection.md](docs/sni-inspection.md)
 
 ### Web UI Configuration
 ```bash

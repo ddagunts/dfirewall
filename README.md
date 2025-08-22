@@ -12,6 +12,7 @@ It allows to create an IP firewall with the following features:
  - Force clients to perform their DNS lookups through our server (or stay blocked)
  - Allow clients outbound access to IPs resolved, with timed expiration of rules
  - Turns any DNS block into a firewall block
+ - SNI inspection to detect domain fronting and TLS connection abuse
 
 # Configuration
 
@@ -96,6 +97,7 @@ Once enabled, access the web interface at `http://localhost:8080` (or your serve
 - **Blacklist Management**: Add/remove IPs and domains from blacklists
 - **Reputation Checking**: Check IP/domain reputation with threat intelligence providers
 - **AI Analysis**: Analyze domains and IPs for threats using AI providers
+- **SNI Inspection Monitoring**: View SNI connection statistics and active connections
 - **Auto-refresh**: Interface updates every 30 seconds automatically
 
 ### Web UI Authentication and Security
@@ -126,6 +128,28 @@ dfirewall integrates with VirusTotal, AbuseIPDB, URLVoid, and custom threat inte
 dfirewall integrates AI technology (OpenAI, Claude, local models) for domain analysis, traffic anomaly detection, and proactive threat hunting.
 
 **📖 For detailed configuration, see:** [docs/ai-threat-detection.md](docs/ai-threat-detection.md)
+
+## SNI Inspection & Domain Fronting Detection
+
+dfirewall includes advanced SNI (Server Name Indication) inspection to detect TLS connection abuse where clients resolve one domain via DNS but connect with a different SNI header. This helps detect domain fronting attacks, DNS cache poisoning, and certificate abuse.
+
+### Key Features
+
+- **TLS Connection Interception**: Intercepts TLS connections on configurable proxy ports
+- **SNI Header Validation**: Compares DNS-requested domains with actual TLS SNI headers
+- **Domain Fronting Detection**: Identifies clients attempting to abuse legitimate domain firewall rules
+- **Per-Client/Domain Policies**: Flexible configuration for selective SNI inspection
+- **Real-time Statistics**: Comprehensive monitoring with connection tracking and mismatch detection
+- **Security Integration**: Works alongside existing blacklisting, reputation checking, and AI analysis
+
+### Quick Start
+
+```bash
+# Enable SNI inspection
+SNI_INSPECTION_CONFIG=/path/to/sni-inspection-config.json
+```
+
+**📖 For detailed configuration and deployment, see:** [docs/sni-inspection.md](docs/sni-inspection.md)
 
 ## Log Collection and Analysis
 

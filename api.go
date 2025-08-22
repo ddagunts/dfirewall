@@ -882,24 +882,26 @@ func handleAPIConfigStatus(w http.ResponseWriter, r *http.Request, redisClient *
 	}
 	
 	config := ConfigStatus{
-		ScriptConfig:       scriptConfig,
-		BlacklistConfig:    blacklistConfig,
-		ReputationConfig:   sanitizeReputationConfig(reputationConfig),
-		AIConfig:           sanitizeAIConfig(aiConfig),
-		CustomScriptConfig: customScriptConfig,
-		WebUIAuthConfig:    sanitizeAuthConfig(authConfig),
-		LogCollectorConfig: sanitizeLogCollectorConfig(logCollectorConfig),
+		ScriptConfig:        scriptConfig,
+		BlacklistConfig:     blacklistConfig,
+		ReputationConfig:    sanitizeReputationConfig(reputationConfig),
+		AIConfig:            sanitizeAIConfig(aiConfig),
+		CustomScriptConfig:  customScriptConfig,
+		WebUIAuthConfig:     sanitizeAuthConfig(authConfig),
+		LogCollectorConfig:  sanitizeLogCollectorConfig(logCollectorConfig),
+		SNIInspectionConfig: sniInspectionConfig, // No sensitive data to sanitize
 		Environment: map[string]string{
-			"UPSTREAM":              os.Getenv("UPSTREAM"),
-			"PORT":                  os.Getenv("PORT"),
-			"WEB_UI_PORT":           os.Getenv("WEB_UI_PORT"),
-			"DEBUG":                 os.Getenv("DEBUG"),
-			"HANDLE_ALL_IPS":        os.Getenv("HANDLE_ALL_IPS"),
-			"ENABLE_EDNS":           os.Getenv("ENABLE_EDNS"),
-			"INVOKE_SCRIPT":         os.Getenv("INVOKE_SCRIPT"),
-			"INVOKE_ALWAYS":         os.Getenv("INVOKE_ALWAYS"),
-			"EXPIRE_SCRIPT":         os.Getenv("EXPIRE_SCRIPT"),
-			"LOG_COLLECTOR_CONFIG":  os.Getenv("LOG_COLLECTOR_CONFIG"),
+			"UPSTREAM":               os.Getenv("UPSTREAM"),
+			"PORT":                   os.Getenv("PORT"),
+			"WEB_UI_PORT":            os.Getenv("WEB_UI_PORT"),
+			"DEBUG":                  os.Getenv("DEBUG"),
+			"HANDLE_ALL_IPS":         os.Getenv("HANDLE_ALL_IPS"),
+			"ENABLE_EDNS":            os.Getenv("ENABLE_EDNS"),
+			"INVOKE_SCRIPT":          os.Getenv("INVOKE_SCRIPT"),
+			"INVOKE_ALWAYS":          os.Getenv("INVOKE_ALWAYS"),
+			"EXPIRE_SCRIPT":          os.Getenv("EXPIRE_SCRIPT"),
+			"LOG_COLLECTOR_CONFIG":   os.Getenv("LOG_COLLECTOR_CONFIG"),
+			"SNI_INSPECTION_CONFIG":  os.Getenv("SNI_INSPECTION_CONFIG"),
 		},
 		LoadedAt: time.Now(),
 	}
@@ -1027,4 +1029,157 @@ func sanitizeLogCollectorConfig(config *LogCollectorConfig) *LogCollectorConfig 
 	}
 	
 	return &sanitized
+}
+
+// SNI Inspection API Handlers
+
+// handleAPISNIStats returns SNI inspection statistics
+func handleAPISNIStats(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Content-Type", "application/json")
+
+	if sniInspectionConfig == nil || !sniInspectionConfig.Enabled {
+		w.WriteHeader(http.StatusNotImplemented)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "SNI inspection is not enabled",
+		})
+		return
+	}
+
+	stats := getSNIInspectionStats()
+	if stats == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "SNI inspection statistics not available",
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(stats)
+}
+
+// handleAPISNIConnections returns active SNI connections
+func handleAPISNIConnections(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Content-Type", "application/json")
+
+	if sniInspectionConfig == nil || !sniInspectionConfig.Enabled {
+		w.WriteHeader(http.StatusNotImplemented)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "SNI inspection is not enabled",
+		})
+		return
+	}
+
+	connections := getActiveSNIConnections()
+	
+	response := map[string]interface{}{
+		"active_connections": len(connections),
+		"connections":        connections,
+		"timestamp":          time.Now(),
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleAPISNIConfig returns sanitized SNI inspection configuration
+func handleAPISNIConfig(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Content-Type", "application/json")
+
+	if sniInspectionConfig == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "SNI inspection configuration not available",
+		})
+		return
+	}
+
+	// Return sanitized configuration (no sensitive data to hide for SNI inspection)
+	json.NewEncoder(w).Encode(sniInspectionConfig)
+}
+
+// handleAPISNIValidate validates SNI for a specific client and domain combination  
+func handleAPISNIValidate(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Method not allowed",
+		})
+		return
+	}
+
+	if sniInspectionConfig == nil || !sniInspectionConfig.Enabled {
+		w.WriteHeader(http.StatusNotImplemented)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "SNI inspection is not enabled",
+		})
+		return
+	}
+
+	var request struct {
+		ClientIP        string `json:"client_ip"`
+		RequestedDomain string `json:"requested_domain"`
+		SNIDomain       string `json:"sni_domain"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Invalid JSON request",
+		})
+		return
+	}
+
+	// Validate inputs
+	if request.ClientIP == "" || request.RequestedDomain == "" || request.SNIDomain == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "client_ip, requested_domain, and sni_domain are required",
+		})
+		return
+	}
+
+	// Validate IP format
+	if net.ParseIP(request.ClientIP) == nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Invalid client_ip format",
+		})
+		return
+	}
+
+	// Check if SNI inspection would be used for this client/domain
+	useSNIInspection, proxyIP := shouldUseSNIInspection(request.ClientIP, request.RequestedDomain)
+	
+	// Validate the SNI
+	isValid := validateSNI(request.ClientIP, request.RequestedDomain, request.SNIDomain)
+
+	response := map[string]interface{}{
+		"client_ip":         request.ClientIP,
+		"requested_domain":  request.RequestedDomain,
+		"sni_domain":        request.SNIDomain,
+		"uses_sni_inspection": useSNIInspection,
+		"proxy_ip":          proxyIP,
+		"is_valid":          isValid,
+		"would_be_blocked":  useSNIInspection && !isValid && sniInspectionConfig.StrictValidation && !sniInspectionConfig.LogOnly,
+		"timestamp":         time.Now(),
+	}
+
+	json.NewEncoder(w).Encode(response)
 }

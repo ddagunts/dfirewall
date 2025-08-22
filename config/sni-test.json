@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "proxy_ips": ["10.0.0.100"],
+  "proxy_ports": [8443],
+  "client_configs": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "enabled": true,
+      "description": "Test configuration"
+    }
+  ],
+  "strict_validation": true,
+  "log_only": false
+}

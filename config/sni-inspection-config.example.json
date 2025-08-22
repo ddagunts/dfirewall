@@ -1,0 +1,61 @@
+{
+  "enabled": true,
+  "proxy_ips": ["10.0.1.100", "10.0.1.101"],
+  "proxy_ports": [8443, 9443, 10443],
+  
+  "cert_file": "/etc/dfirewall/tls/proxy.crt",
+  "key_file": "/etc/dfirewall/tls/proxy.key",
+  
+  "connection_timeout": 30,
+  "handshake_timeout": 10,
+  "idle_timeout": 300,
+  "max_connections": 1000,
+  
+  "client_configs": [
+    {
+      "client_pattern": "192.168.1.0/24",
+      "enabled": true,
+      "proxy_ip": "10.0.1.100",
+      "description": "Internal network clients use primary proxy IP"
+    },
+    {
+      "client_pattern": "regex:^10\\..*",
+      "enabled": true,
+      "proxy_ip": "10.0.1.101",
+      "description": "Docker network clients use secondary proxy IP"
+    },
+    {
+      "client_pattern": "172.16.0.100",
+      "enabled": false,
+      "description": "Disable SNI inspection for specific server"
+    }
+  ],
+  
+  "domain_configs": [
+    {
+      "domain_pattern": "*.banking.com",
+      "enabled": true,
+      "proxy_ip": "10.0.1.100",
+      "description": "Banking domains require SNI inspection"
+    },
+    {
+      "domain_pattern": "*.internal.company.com",
+      "enabled": false,
+      "description": "Skip SNI inspection for internal domains"
+    },
+    {
+      "domain_pattern": "regex:^.*\\.suspicious\\..*$",
+      "enabled": true,
+      "description": "Inspect all suspicious domains with regex"
+    }
+  ],
+  
+  "strict_validation": true,
+  "log_only": false,
+  
+  "upstream_timeout": 30,
+  "buffer_size": 32768,
+  
+  "enable_stats": true,
+  "stats_retention": 24
+}

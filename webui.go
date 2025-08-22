@@ -107,6 +107,20 @@ func startWebUI(port string, redisClient *redis.Client) {
 		handleAPILogCollectorConfig(w, r, redisClient)
 	}))
 	
+	// SNI Inspection API endpoints
+	mux.HandleFunc("/api/sni/stats", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
+		handleAPISNIStats(w, r, redisClient)
+	}))
+	mux.HandleFunc("/api/sni/connections", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
+		handleAPISNIConnections(w, r, redisClient)
+	}))
+	mux.HandleFunc("/api/sni/config", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
+		handleAPISNIConfig(w, r, redisClient)
+	}))
+	mux.HandleFunc("/api/sni/validate", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
+		handleAPISNIValidate(w, r, redisClient)
+	}))
+	
 	server := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux, // Use our custom ServeMux instead of default
@@ -152,10 +166,10 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
         .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         h1 { color: #333; border-bottom: 2px solid #007acc; padding-bottom: 10px; }
-        .stats { display: flex; gap: 20px; margin: 20px 0; }
-        .stat-box { background: #007acc; color: white; padding: 15px; border-radius: 5px; flex: 1; text-align: center; }
-        .stat-box h3 { margin: 0; font-size: 24px; }
-        .stat-box p { margin: 5px 0 0 0; font-size: 14px; }
+        .stats { display: flex; gap: 15px; margin: 15px 0; }
+        .stat-box { background: #007acc; color: white; padding: 10px; border-radius: 5px; flex: 1; text-align: center; }
+        .stat-box h3 { margin: 0; font-size: 18px; }
+        .stat-box p { margin: 3px 0 0 0; font-size: 12px; }
         
         /* View Toggle Buttons */
         .view-toggle { margin: 20px 0; text-align: center; }
@@ -169,7 +183,8 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         .client-header { background: #f8f9fa; padding: 15px; border-bottom: 1px solid #ddd; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
         .client-header:hover { background: #e9ecef; }
         .client-header h3 { margin: 0; color: #495057; }
-        .client-stats { display: flex; gap: 15px; align-items: center; font-size: 14px; color: #6c757d; }
+        .client-stats { display: flex; gap: 15px; align-items: center; font-size: 14px; color: #6c757d; flex-wrap: nowrap; min-width: 0; }
+        .client-stats span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
         .client-badge { background: #007acc; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
         .collapse-icon { font-size: 18px; color: #6c757d; transition: transform 0.3s; }
         .client-section.collapsed .collapse-icon { transform: rotate(-90deg); }
@@ -197,6 +212,24 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         .delete-btn:hover { background: #c82333; }
         .refresh-btn { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-bottom: 20px; }
         .refresh-btn:hover { background: #218838; }
+        
+        /* Unified button styling for top navigation buttons */
+        .top-nav-btn { 
+            background: #6c757d; 
+            color: white; 
+            border: none; 
+            padding: 10px 20px; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            text-decoration: none; 
+            display: inline-block; 
+            font-size: 14px;
+            min-width: 160px;
+            text-align: center;
+        }
+        .top-nav-btn:hover { background: #5a6268; }
+        .top-nav-btn.refresh { background: #28a745; }
+        .top-nav-btn.refresh:hover { background: #218838; }
         .loading { text-align: center; padding: 40px; color: #666; }
         .error { color: #dc3545; text-align: center; padding: 20px; }
         .domain { word-break: break-all; max-width: 200px; }
@@ -212,10 +245,13 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
     <div class="container">
         <h1>dfirewall - Firewall Rule Management</h1>
         
-        <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <button class="refresh-btn" onclick="loadData()">🔄 Refresh Data</button>
-                <a href="/api/docs" target="_blank" style="background: #6c757d; color: white; text-decoration: none; padding: 10px 20px; border-radius: 5px; margin-left: 10px; display: inline-block;">📖 API Documentation</a>
+        <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <button class="top-nav-btn refresh" onclick="loadData()">🔄 Refresh Data</button>
+                <a href="/api/docs" target="_blank" class="top-nav-btn">📖 API Documentation</a>
+                <button class="top-nav-btn" onclick="toggleSettings()">⚙️ Settings</button>
+                <button class="view-btn active" id="groupedViewBtn" onclick="switchView('grouped')">👥 Grouped by Client</button>
+                <button class="view-btn" id="tableViewBtn" onclick="switchView('table')">📋 Table View</button>
             </div>
             <div id="authStatus" style="display: none;">
                 <span style="color: #666; margin-right: 10px;">Logged in as: <strong id="currentUser">-</strong></span>
@@ -223,10 +259,32 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             </div>
         </div>
         
-        <!-- View Toggle -->
-        <div class="view-toggle">
-            <button class="view-btn active" id="groupedViewBtn" onclick="switchView('grouped')">👥 Grouped by Client</button>
-            <button class="view-btn" id="tableViewBtn" onclick="switchView('table')">📋 Table View</button>
+        <!-- Settings Panel -->
+        <div id="settingsPanel" style="display: none; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+            <h3 style="margin: 0 0 15px 0; color: #495057;">⚙️ Settings</h3>
+            <div style="display: flex; gap: 30px; flex-wrap: wrap;">
+                <div>
+                    <label for="refreshRate" style="display: block; margin-bottom: 5px; font-weight: bold; color: #495057;">Auto-refresh Interval:</label>
+                    <select id="refreshRate" onchange="updateRefreshRate()" style="padding: 8px; border: 1px solid #ddd; border-radius: 3px; background: white;">
+                        <option value="0">Disabled</option>
+                        <option value="5000">5 seconds</option>
+                        <option value="10000">10 seconds</option>
+                        <option value="15000">15 seconds</option>
+                        <option value="30000" selected>30 seconds (default)</option>
+                        <option value="60000">1 minute</option>
+                        <option value="120000">2 minutes</option>
+                        <option value="300000">5 minutes</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #495057;">Refresh Status:</label>
+                    <span id="refreshStatus" style="padding: 6px 12px; border-radius: 15px; font-size: 12px; font-weight: bold;">Active (30s)</span>
+                </div>
+                <div>
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #495057;">Next Refresh:</label>
+                    <span id="nextRefresh" style="color: #666; font-family: monospace;">-</span>
+                </div>
+            </div>
         </div>
         
         <div class="stats" id="stats">
@@ -328,6 +386,10 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         // ASSUMPTION: Use vanilla JavaScript to avoid external dependencies
         
         let currentView = 'grouped'; // Default view
+        let refreshInterval = 30000; // Default 30 seconds
+        let refreshTimer = null;
+        let nextRefreshTime = null;
+        let countdownTimer = null;
         
         // Switch between grouped and table views
         function switchView(view) {
@@ -341,33 +403,28 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             loadData();
         }
         
-        async function loadData() {
-            document.getElementById('loading').style.display = 'block';
-            document.getElementById('error').style.display = 'none';
-            document.getElementById('rulesTable').style.display = 'none';
-            document.getElementById('groupedView').style.display = 'none';
+        async function loadData(showLoading = true) {
+            if (showLoading) {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('error').style.display = 'none';
+                document.getElementById('rulesTable').style.display = 'none';
+                document.getElementById('groupedView').style.display = 'none';
+            }
             
             try {
-                // Load statistics
-                const statsResponse = await fetch('/api/stats');
-                if (!statsResponse.ok) {
-                    throw new Error('Stats API failed: ' + statsResponse.status + ' ' + statsResponse.statusText);
-                }
-                const stats = await statsResponse.json();
-                
-                document.getElementById('totalRules').textContent = stats.total_rules;
-                document.getElementById('activeClients').textContent = stats.active_clients;
-                document.getElementById('uniqueDomains').textContent = stats.unique_domains;
-                document.getElementById('uniqueIPs').textContent = stats.unique_ips;
+                // Load statistics with smooth update
+                await loadStats();
                 
                 if (currentView === 'grouped') {
-                    await loadGroupedView();
+                    await loadGroupedView(showLoading);
                 } else {
-                    await loadTableView();
+                    await loadTableView(showLoading);
                 }
                 
             } catch (error) {
-                document.getElementById('loading').style.display = 'none';
+                if (showLoading) {
+                    document.getElementById('loading').style.display = 'none';
+                }
                 document.getElementById('error').style.display = 'block';
                 
                 // Provide more detailed error information
@@ -381,55 +438,307 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             }
         }
         
-        async function loadGroupedView() {
-            // Load grouped rules
-            const rulesResponse = await fetch('/api/rules?grouped=true');
-            if (!rulesResponse.ok) {
-                throw new Error('Grouped Rules API failed: ' + rulesResponse.status + ' ' + rulesResponse.statusText);
+        async function loadStats() {
+            try {
+                const statsResponse = await fetch('/api/stats');
+                if (!statsResponse.ok) {
+                    throw new Error('Stats API failed: ' + statsResponse.status + ' ' + statsResponse.statusText);
+                }
+                const stats = await statsResponse.json();
+                
+                // Smooth update of statistics with animation
+                updateStatWithAnimation('totalRules', stats.total_rules);
+                updateStatWithAnimation('activeClients', stats.active_clients);
+                updateStatWithAnimation('uniqueDomains', stats.unique_domains);
+                updateStatWithAnimation('uniqueIPs', stats.unique_ips);
+            } catch (error) {
+                // Silently fail stats updates during auto-refresh to avoid disrupting user experience
+                console.warn('Stats update failed:', error.message);
             }
-            const groupedData = await rulesResponse.json();
-            
-            const container = document.getElementById('clientsContainer');
-            container.innerHTML = '';
-            
-            if (groupedData.clients.length === 0) {
-                container.innerHTML = '<div class="empty-state">' +
-                    '<h3>No firewall rules found</h3>' +
-                    '<p>Rules will appear here after DNS queries are processed through dfirewall.<br>' +
-                    'Each client that makes DNS requests will be shown with their associated firewall rules.</p>' +
-                    '</div>';
-            } else {
-                groupedData.clients.forEach(client => {
-                    const clientSection = createClientSection(client);
-                    container.appendChild(clientSection);
-                });
-            }
-            
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('groupedView').style.display = 'block';
         }
         
-        async function loadTableView() {
-            // Load traditional flat rules
-            const rulesResponse = await fetch('/api/rules');
-            if (!rulesResponse.ok) {
-                throw new Error('Rules API failed: ' + rulesResponse.status + ' ' + rulesResponse.statusText);
+        function updateStatWithAnimation(elementId, newValue) {
+            const element = document.getElementById(elementId);
+            const currentValue = element.textContent;
+            
+            if (currentValue !== newValue.toString()) {
+                element.style.transition = 'all 0.3s ease';
+                element.style.transform = 'scale(1.1)';
+                element.style.color = '#28a745';
+                
+                setTimeout(() => {
+                    element.textContent = newValue;
+                    element.style.transform = 'scale(1)';
+                    element.style.color = '';
+                }, 150);
             }
-            const rules = await rulesResponse.json();
+        }
+        
+        async function loadGroupedView(showLoading = true) {
+            try {
+                // Load grouped rules
+                const rulesResponse = await fetch('/api/rules?grouped=true');
+                if (!rulesResponse.ok) {
+                    throw new Error('Grouped Rules API failed: ' + rulesResponse.status + ' ' + rulesResponse.statusText);
+                }
+                const groupedData = await rulesResponse.json();
+                
+                const container = document.getElementById('clientsContainer');
+                
+                if (groupedData.clients.length === 0) {
+                    if (showLoading || container.innerHTML === '') {
+                        container.innerHTML = '<div class="empty-state">' +
+                            '<h3>No firewall rules found</h3>' +
+                            '<p>Rules will appear here after DNS queries are processed through dfirewall.<br>' +
+                            'Each client that makes DNS requests will be shown with their associated firewall rules.</p>' +
+                            '</div>';
+                    }
+                } else {
+                    updateGroupedViewSmooth(container, groupedData.clients);
+                }
+                
+                if (showLoading) {
+                    document.getElementById('loading').style.display = 'none';
+                }
+                document.getElementById('groupedView').style.display = 'block';
+            } catch (error) {
+                if (!showLoading) {
+                    // Silent failure for auto-refresh
+                    console.warn('Grouped view update failed:', error.message);
+                    return;
+                }
+                throw error; // Re-throw for manual refresh to show error
+            }
+        }
+        
+        function updateGroupedViewSmooth(container, newClients) {
+            const existingClients = new Map();
+            const existingElements = container.querySelectorAll('.client-section');
             
-            const tbody = document.getElementById('rulesBody');
-            tbody.innerHTML = '';
+            // Build map of existing client sections
+            existingElements.forEach(element => {
+                const clientIP = element.id.replace('client-', '').replace(/_/g, ':').replace(/:/g, '.').replace(/\./g, ':');
+                if (clientIP.includes('_')) {
+                    // Handle IPv6 or complex IPs
+                    const parts = element.id.split('_');
+                    if (parts.length > 2) {
+                        existingClients.set(element.id, element);
+                    } else {
+                        existingClients.set(clientIP.replace(/_/g, '.'), element);
+                    }
+                } else {
+                    existingClients.set(clientIP, element);
+                }
+            });
             
-            if (rules.length === 0) {
-                // Show a message when no rules exist
-                const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="6" style="text-align: center; color: #666; font-style: italic; padding: 40px;">' +
-                    'No firewall rules found. Rules will appear here after DNS queries are processed through dfirewall.' +
-                    '</td>';
-                tbody.appendChild(row);
-            } else {
-                rules.forEach(rule => {
+            // Create a set of new client IPs for tracking
+            const newClientIPs = new Set(newClients.map(client => client.client_ip));
+            
+            // Remove clients that no longer exist with fade-out animation
+            existingElements.forEach(element => {
+                const clientIP = extractClientIPFromElement(element);
+                if (!newClientIPs.has(clientIP)) {
+                    element.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                    element.style.opacity = '0';
+                    element.style.transform = 'translateX(-20px)';
+                    setTimeout(() => element.remove(), 500);
+                }
+            });
+            
+            // Update or add clients
+            newClients.forEach(client => {
+                const existingElement = findExistingClientElement(container, client.client_ip);
+                
+                if (existingElement) {
+                    // Update existing client
+                    updateClientSectionSmooth(existingElement, client);
+                } else {
+                    // Add new client with fade-in animation
+                    const clientSection = createClientSection(client);
+                    clientSection.style.opacity = '0';
+                    clientSection.style.transform = 'translateX(20px)';
+                    clientSection.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                    
+                    container.appendChild(clientSection);
+                    
+                    // Trigger animation after element is in DOM
+                    setTimeout(() => {
+                        clientSection.style.opacity = '1';
+                        clientSection.style.transform = 'translateX(0)';
+                    }, 10);
+                }
+            });
+        }
+        
+        function extractClientIPFromElement(element) {
+            // Extract client IP from element ID, handling IPv4 and IPv6
+            const id = element.id;
+            if (id.startsWith('client-')) {
+                const ipPart = id.replace('client-', '');
+                // Handle IPv4 (periods replaced with underscores)
+                if (ipPart.match(/^\d+_\d+_\d+_\d+$/)) {
+                    return ipPart.replace(/_/g, '.');
+                }
+                // Handle IPv6 and complex cases - reconstruct from header text
+                const header = element.querySelector('.client-header h3');
+                if (header) {
+                    return header.textContent.replace('📱 ', '');
+                }
+                return ipPart;
+            }
+            return '';
+        }
+        
+        function findExistingClientElement(container, clientIP) {
+            const cleanIP = clientIP.replace(/[.:]/g, '_');
+            return container.querySelector('#client-' + cleanIP);
+        }
+        
+        function updateClientSectionSmooth(element, client) {
+            // Update header stats
+            const headerRight = element.querySelector('.client-stats');
+            if (headerRight) {
+                const ruleCount = headerRight.querySelector('.client-badge');
+                const lastActivity = headerRight.querySelector('.last-activity');
+                
+                if (ruleCount && ruleCount.textContent !== client.rule_count + ' rules') {
+                    ruleCount.style.transition = 'all 0.3s ease';
+                    ruleCount.style.transform = 'scale(1.2)';
+                    ruleCount.style.background = '#28a745';
+                    
+                    setTimeout(() => {
+                        ruleCount.textContent = client.rule_count + ' rules';
+                        ruleCount.style.transform = 'scale(1)';
+                        ruleCount.style.background = '#007acc';
+                    }, 150);
+                }
+                
+                if (lastActivity) {
+                    lastActivity.textContent = 'Last activity: ' + new Date(client.last_updated).toLocaleString();
+                }
+            }
+            
+            // Update rules - for now, recreate rules content (could be further optimized)
+            const rulesContainer = element.querySelector('.client-rules');
+            if (rulesContainer) {
+                rulesContainer.innerHTML = '';
+                client.rules.forEach(rule => {
+                    const ruleDiv = document.createElement('div');
+                    ruleDiv.className = 'rule-row';
+                    ruleDiv.style.opacity = '0';
+                    ruleDiv.style.transform = 'translateY(-10px)';
+                    ruleDiv.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                    
+                    const ruleInfo = document.createElement('div');
+                    ruleInfo.className = 'rule-info';
+                    ruleInfo.innerHTML = 
+                        '<div class="rule-primary">' + rule.domain + ' → ' + rule.resolved_ip + '</div>' +
+                        '<div class="rule-secondary">TTL: ' + rule.ttl + 's | Expires: ' + new Date(rule.expires_at).toLocaleString() + '</div>';
+                    
+                    const ruleActions = document.createElement('div');
+                    ruleActions.className = 'rule-actions';
+                    ruleActions.innerHTML = '<button class="delete-btn" onclick="deleteRule(\'' + rule.key + '\')">Delete</button>';
+                    
+                    ruleDiv.appendChild(ruleInfo);
+                    ruleDiv.appendChild(ruleActions);
+                    rulesContainer.appendChild(ruleDiv);
+                    
+                    // Animate rule appearance
+                    setTimeout(() => {
+                        ruleDiv.style.opacity = '1';
+                        ruleDiv.style.transform = 'translateY(0)';
+                    }, Math.random() * 200); // Stagger animations
+                });
+            }
+        }
+        
+        async function loadTableView(showLoading = true) {
+            try {
+                // Load traditional flat rules
+                const rulesResponse = await fetch('/api/rules');
+                if (!rulesResponse.ok) {
+                    throw new Error('Rules API failed: ' + rulesResponse.status + ' ' + rulesResponse.statusText);
+                }
+                const rules = await rulesResponse.json();
+                
+                const tbody = document.getElementById('rulesBody');
+                
+                if (rules.length === 0) {
+                    if (showLoading || tbody.children.length === 0) {
+                        tbody.innerHTML = '';
+                        const row = document.createElement('tr');
+                        row.innerHTML = '<td colspan="6" style="text-align: center; color: #666; font-style: italic; padding: 40px;">' +
+                            'No firewall rules found. Rules will appear here after DNS queries are processed through dfirewall.' +
+                            '</td>';
+                        tbody.appendChild(row);
+                    }
+                } else {
+                    updateTableViewSmooth(tbody, rules);
+                }
+                
+                if (showLoading) {
+                    document.getElementById('loading').style.display = 'none';
+                }
+                document.getElementById('rulesTable').style.display = 'table';
+            } catch (error) {
+                if (!showLoading) {
+                    // Silent failure for auto-refresh
+                    console.warn('Table view update failed:', error.message);
+                    return;
+                }
+                throw error; // Re-throw for manual refresh to show error
+            }
+        }
+        
+        function updateTableViewSmooth(tbody, newRules) {
+            const existingRows = Array.from(tbody.querySelectorAll('tr[data-rule-key]'));
+            const newRuleKeys = new Set(newRules.map(rule => rule.key));
+            
+            // Remove rows that no longer exist
+            existingRows.forEach(row => {
+                const ruleKey = row.getAttribute('data-rule-key');
+                if (!newRuleKeys.has(ruleKey)) {
+                    row.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                    row.style.opacity = '0';
+                    row.style.transform = 'translateX(-20px)';
+                    setTimeout(() => row.remove(), 500);
+                }
+            });
+            
+            // Track existing rule keys for updates
+            const existingRuleKeys = new Set(existingRows.map(row => row.getAttribute('data-rule-key')));
+            
+            // Clear tbody if empty state was showing
+            if (tbody.querySelector('td[colspan="6"]')) {
+                tbody.innerHTML = '';
+            }
+            
+            // Add or update rules
+            newRules.forEach((rule, index) => {
+                const existingRow = tbody.querySelector('tr[data-rule-key="' + rule.key + '"]');
+                
+                if (existingRow) {
+                    // Update existing row content (could be more granular)
+                    const cells = existingRow.querySelectorAll('td');
+                    if (cells.length >= 6) {
+                        cells[3].textContent = rule.ttl; // Update TTL
+                        cells[4].textContent = new Date(rule.expires_at).toLocaleString(); // Update expiry
+                        
+                        // Flash effect for updated rows
+                        existingRow.style.transition = 'background-color 0.5s ease';
+                        existingRow.style.backgroundColor = '#d4edda';
+                        setTimeout(() => {
+                            existingRow.style.backgroundColor = '';
+                        }, 1000);
+                    }
+                } else {
+                    // Add new rule with animation
                     const row = document.createElement('tr');
+                    row.setAttribute('data-rule-key', rule.key);
+                    row.style.opacity = '0';
+                    row.style.transform = 'translateY(-10px)';
+                    row.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                    
                     row.innerHTML = 
                         '<td>' + rule.client_ip + '</td>' +
                         '<td>' + rule.resolved_ip + '</td>' +
@@ -439,17 +748,21 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                         '<td>' +
                             '<button class="delete-btn" onclick="deleteRule(\'' + rule.key + '\')">Delete</button>' +
                         '</td>';
+                    
                     tbody.appendChild(row);
-                });
-            }
-            
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('rulesTable').style.display = 'table';
+                    
+                    // Animate new row appearance
+                    setTimeout(() => {
+                        row.style.opacity = '1';
+                        row.style.transform = 'translateY(0)';
+                    }, index * 50); // Stagger animations
+                }
+            });
         }
         
         function createClientSection(client) {
             const section = document.createElement('div');
-            section.className = 'client-section';
+            section.className = 'client-section collapsed';  // Start collapsed by default
             section.id = 'client-' + client.client_ip.replace(/[.:]/g, '_');
             
             // Create header
@@ -465,7 +778,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             headerRight.innerHTML = 
                 '<span class="client-badge">' + client.rule_count + ' rules</span>' +
                 '<span class="ttl-badge" style="background: #17a2b8; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; margin: 0 5px;">TTL+' + client.ttl_grace_period_seconds + 's</span>' +
-                '<span>Last activity: ' + new Date(client.last_updated).toLocaleString() + '</span>' +
+                '<span class="last-activity">Last activity: ' + new Date(client.last_updated).toLocaleString() + '</span>' +
                 '<span class="collapse-icon">▼</span>';
             
             header.appendChild(headerLeft);
@@ -504,7 +817,6 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         }
         
         async function deleteRule(key) {
-            
             try {
                 const response = await fetch('/api/rules/delete', {
                     method: 'POST',
@@ -515,7 +827,8 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                 });
                 
                 if (response.ok) {
-                    loadData(); // Refresh the data
+                    // Smooth refresh without loading indicator
+                    loadData(false);
                 } else {
                     alert('Error deleting rule');
                 }
@@ -546,6 +859,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                     alert('IP ' + result.ip + ' added to blacklist');
                     document.getElementById('ipInput').value = '';
                     loadBlacklists(); // Refresh blacklist display
+                    loadData(false); // Smooth refresh of main data
                 } else {
                     const errorText = await response.text();
                     alert('Error adding IP to blacklist: ' + errorText);
@@ -576,6 +890,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                     alert('Domain ' + result.domain + ' added to blacklist');
                     document.getElementById('domainInput').value = '';
                     loadBlacklists(); // Refresh blacklist display
+                    loadData(false); // Smooth refresh of main data
                 } else {
                     const errorText = await response.text();
                     alert('Error adding domain to blacklist: ' + errorText);
@@ -602,6 +917,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                     const result = await response.json();
                     alert(type.toUpperCase() + ' ' + value + ' removed from blacklist');
                     loadBlacklists(); // Refresh blacklist display
+                    loadData(false); // Smooth refresh of main data
                 } else {
                     const errorText = await response.text();
                     alert('Error removing from blacklist: ' + errorText);
@@ -818,15 +1134,121 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             }
         }
         
+        // Settings management functions
+        function toggleSettings() {
+            const panel = document.getElementById('settingsPanel');
+            if (panel.style.display === 'none' || panel.style.display === '') {
+                panel.style.display = 'block';
+                updateNextRefreshDisplay();
+            } else {
+                panel.style.display = 'none';
+            }
+        }
+        
+        function updateRefreshRate() {
+            const selectElement = document.getElementById('refreshRate');
+            refreshInterval = parseInt(selectElement.value);
+            
+            // Save to localStorage
+            localStorage.setItem('dfirewall_refresh_interval', refreshInterval.toString());
+            
+            // Clear existing timers
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+                refreshTimer = null;
+            }
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+            
+            // Update status display
+            updateRefreshStatus();
+            
+            // Start new timer if not disabled
+            if (refreshInterval > 0) {
+                startAutoRefresh();
+            }
+        }
+        
+        function updateRefreshStatus() {
+            const statusElement = document.getElementById('refreshStatus');
+            const nextRefreshElement = document.getElementById('nextRefresh');
+            
+            if (refreshInterval === 0) {
+                statusElement.textContent = 'Disabled';
+                statusElement.style.background = '#6c757d';
+                statusElement.style.color = 'white';
+                nextRefreshElement.textContent = 'Manual only';
+            } else {
+                const seconds = refreshInterval / 1000;
+                const timeText = seconds >= 60 ? (seconds / 60) + 'm' : seconds + 's';
+                statusElement.textContent = 'Active (' + timeText + ')';
+                statusElement.style.background = '#28a745';
+                statusElement.style.color = 'white';
+                updateNextRefreshDisplay();
+            }
+        }
+        
+        function updateNextRefreshDisplay() {
+            const nextRefreshElement = document.getElementById('nextRefresh');
+            
+            if (refreshInterval === 0 || !nextRefreshTime) {
+                nextRefreshElement.textContent = 'Manual only';
+                return;
+            }
+            
+            const now = new Date();
+            const timeUntilRefresh = Math.max(0, nextRefreshTime - now.getTime());
+            const secondsUntilRefresh = Math.ceil(timeUntilRefresh / 1000);
+            
+            if (secondsUntilRefresh <= 0) {
+                nextRefreshElement.textContent = 'Refreshing...';
+            } else {
+                nextRefreshElement.textContent = secondsUntilRefresh + 's';
+            }
+        }
+        
+        function startAutoRefresh() {
+            if (refreshInterval === 0) return;
+            
+            nextRefreshTime = new Date().getTime() + refreshInterval;
+            
+            refreshTimer = setInterval(() => {
+                loadData(false);
+                nextRefreshTime = new Date().getTime() + refreshInterval;
+            }, refreshInterval);
+            
+            // Update countdown every second
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+            }
+            countdownTimer = setInterval(updateNextRefreshDisplay, 1000);
+        }
+        
+        function loadUserPreferences() {
+            // Load refresh interval from localStorage
+            const savedInterval = localStorage.getItem('dfirewall_refresh_interval');
+            if (savedInterval) {
+                refreshInterval = parseInt(savedInterval);
+                document.getElementById('refreshRate').value = refreshInterval.toString();
+            }
+            
+            updateRefreshStatus();
+        }
+        
         // Load data on page load
         window.onload = function() {
             checkAuthStatus();
+            loadUserPreferences();
             loadData();
             loadBlacklists();
+            
+            // Start auto-refresh if enabled
+            if (refreshInterval > 0) {
+                startAutoRefresh();
+            }
         };
-        
-        // Auto-refresh every 30 seconds
-        setInterval(loadData, 30000);
     </script>
 </body>
 </html>`

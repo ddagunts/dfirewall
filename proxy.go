@@ -306,6 +306,26 @@ func Register(rt Route) error {
 		log.Printf("LOG_COLLECTOR_CONFIG env var not set, log collection disabled")
 	}
 
+	// SNI_INSPECTION_CONFIG: JSON configuration file for SNI inspection
+	sniInspectionConfigPath := os.Getenv("SNI_INSPECTION_CONFIG")
+	if sniInspectionConfigPath != "" {
+		config, err := loadSNIInspectionConfiguration(sniInspectionConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load SNI inspection configuration: %v", err)
+		}
+		sniInspectionConfig = config
+		
+		// Initialize SNI inspection system
+		if err := initializeSNIInspection(); err != nil {
+			log.Fatalf("Failed to initialize SNI inspection: %v", err)
+		}
+		
+		log.Printf("SNI_INSPECTION_CONFIG loaded from %s: enabled=%v, proxy_ips=%d, ports=%d", 
+			sniInspectionConfigPath, sniInspectionConfig.Enabled, len(sniInspectionConfig.ProxyIPs), len(sniInspectionConfig.ProxyPorts))
+	} else {
+		log.Printf("SNI_INSPECTION_CONFIG env var not set, SNI inspection disabled")
+	}
+
 	// UPSTREAM_CONFIG: JSON configuration file for per-client and per-zone upstream resolvers
 	var upstreamConfig *UpstreamConfig
 	upstreamConfigPath := os.Getenv("UPSTREAM_CONFIG")
@@ -429,6 +449,15 @@ func Register(rt Route) error {
 		go func() {
 			if err := startLogCollectors(redisClient); err != nil {
 				log.Printf("Failed to start log collectors: %v", err)
+			}
+		}()
+	}
+
+	// Start SNI proxy servers if enabled
+	if sniInspectionConfig != nil && sniInspectionConfig.Enabled {
+		go func() {
+			if err := startSNIProxyServers(); err != nil {
+				log.Printf("Failed to start SNI proxy servers: %v", err)
 			}
 		}()
 	}
@@ -657,6 +686,24 @@ func Register(rt Route) error {
 					log.Printf("A record: %s -> %s (DNS TTL: %d, Redis TTL with grace: %s)", domain, resolvedIP, rrType.Hdr.Ttl, ttl)
 				}
 
+				// FEATURE: SNI inspection - check if we should return proxy IP instead of real IP
+				useSNIInspection, proxyIP := shouldUseSNIInspection(from, domain)
+				if useSNIInspection {
+					// Track the real resolution for SNI validation
+					trackDNSRequest(from, domain, resolvedIP)
+					
+					// Replace the resolved IP with proxy IP in DNS response
+					originalIP := resolvedIP
+					resolvedIP = proxyIP
+					rrType.A = net.ParseIP(proxyIP).To4()
+					
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("SNI inspection enabled for %s: replacing %s with proxy IP %s", domain, originalIP, proxyIP)
+					}
+					log.Printf("SNI inspection: client %s querying %s, returning proxy IP %s instead of %s", 
+						from, domain, proxyIP, originalIP)
+				}
+
 				// FEATURE: IP blacklist checking after DNS resolution
 				if checkIPBlacklist(resolvedIP, redisClient) {
 					if blacklistConfig.LogOnly {
@@ -776,6 +823,29 @@ func Register(rt Route) error {
 
 				if os.Getenv("DEBUG") != "" {
 					log.Printf("AAAA record: %s -> %s (DNS TTL: %d, Redis TTL with grace: %s)", domain, resolvedIPv6, rrType.Hdr.Ttl, ttl)
+				}
+
+				// FEATURE: SNI inspection for IPv6 - check if we should return proxy IP instead of real IP
+				useSNIInspection, proxyIP := shouldUseSNIInspection(from, domain)
+				if useSNIInspection {
+					// Track the real resolution for SNI validation
+					trackDNSRequest(from, domain, resolvedIPv6)
+					
+					// Check if proxy IP is IPv6, if not skip SNI inspection for AAAA records
+					if proxyIPParsed := net.ParseIP(proxyIP); proxyIPParsed != nil && proxyIPParsed.To4() == nil {
+						// Replace the resolved IPv6 with proxy IPv6 in DNS response
+						originalIPv6 := resolvedIPv6
+						resolvedIPv6 = proxyIP
+						rrType.AAAA = net.ParseIP(proxyIP).To16()
+						
+						if os.Getenv("DEBUG") != "" {
+							log.Printf("SNI inspection enabled for %s (IPv6): replacing %s with proxy IP %s", domain, originalIPv6, proxyIP)
+						}
+						log.Printf("SNI inspection (IPv6): client %s querying %s, returning proxy IP %s instead of %s", 
+							from, domain, proxyIP, originalIPv6)
+					} else if os.Getenv("DEBUG") != "" {
+						log.Printf("SNI inspection: skipping IPv6 record for %s, proxy IP %s is not IPv6", domain, proxyIP)
+					}
 				}
 
 				// Similar processing for IPv6

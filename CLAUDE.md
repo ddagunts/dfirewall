@@ -11,31 +11,34 @@ dfirewall is a DNS proxy that implements a "default deny" egress network firewal
 ### Core Components
 
 - **dfirewall.go**: Main entry point that starts UDP and TCP DNS servers on port 53 (64 lines)
-- **proxy.go**: DNS proxy logic that handles requests, queries upstream DNS, stores results in Redis, and executes firewall scripts (~1200+ lines)
+- **proxy.go**: DNS proxy logic that handles requests, queries upstream DNS, stores results in Redis, and executes firewall scripts (~1300+ lines)
+- **sni.go**: SNI (Server Name Indication) inspection system with TLS connection interception, validation, and proxying (~650+ lines)
 - **logcollector.go**: Log collection system with SSH and local file monitoring, regex pattern matching, and integration with firewall rules (~900+ lines)
-- **api.go**: HTTP API handlers for web UI and REST endpoints (~1000+ lines)
+- **api.go**: HTTP API handlers for web UI and REST endpoints (~1200+ lines)
 - **webui.go**: Web UI server with authentication middleware and rate limiting (~400+ lines)
 - **auth.go**: Authentication system supporting password, LDAP, and header-based auth (~500+ lines)
 - **redis.go**: Redis client management with TLS and authentication support (~300+ lines)
 - **security.go**: Security validation, blacklisting, reputation checking, and AI threat detection (~2400+ lines)
-- **types.go**: Data structures and configuration types (~540+ lines)
+- **types.go**: Data structures and configuration types (~700+ lines)
 - **scripts/**: Shell scripts for firewall management, expiration handling, and validation (8 scripts)
-- **config/**: Example and active configuration files (10+ JSON/text files)
-- **docs/**: Comprehensive documentation (9 markdown files)
+- **config/**: Example and active configuration files (12+ JSON/text files)
+- **docs/**: Comprehensive documentation (10 markdown files)
 
 ### Architecture Flow
 
 1. **DNS Interception**: Client DNS requests → dfirewall:53 → upstream resolver
 2. **Data Processing**: DNS responses → IP/domain extraction → Redis storage with TTL
-3. **Security Pipeline**: IPs/domains → blacklist check → reputation check → AI analysis → custom scripts
-4. **Firewall Integration**: Validated IPs → script execution → iptables/ipset rules → client access
-5. **Log Collection**: Remote/local log files → regex extraction → security pipeline → firewall rules
-6. **Expiration**: Redis TTL expires → expire script → cleanup firewall rules
+3. **SNI Inspection**: If enabled, return proxy IP instead of real IP → track DNS mapping → intercept TLS connections → validate SNI headers
+4. **Security Pipeline**: IPs/domains → blacklist check → reputation check → AI analysis → custom scripts
+5. **Firewall Integration**: Validated IPs → script execution → iptables/ipset rules → client access
+6. **Log Collection**: Remote/local log files → regex extraction → security pipeline → firewall rules
+7. **Expiration**: Redis TTL expires → expire script → cleanup firewall rules
 
 ### Key Features
 
 - DNS interception and forwarding to upstream resolvers
 - **Per-client and per-zone upstream resolver routing with priority-based selection**
+- **SNI (Server Name Indication) inspection with TLS connection interception to detect domain fronting and DNS abuse**
 - Redis storage for tracking client IP → resolved IP → domain mappings with TTL expiration
 - Dynamic firewall rule creation via executable scripts
 - Per-client script configuration with pattern matching (IP, CIDR, regex)
@@ -148,6 +151,7 @@ Optional:
 - `WEBUI_SESSION_SECRET`: Secret key for session signing (auto-generated if not provided)
 - `WEBUI_SESSION_EXPIRY`: Session expiry time in hours (default: 24)
 - `LOG_COLLECTOR_CONFIG`: Path to JSON configuration file for log collection from remote/local sources
+- `SNI_INSPECTION_CONFIG`: Path to JSON configuration file for SNI (TLS) inspection and domain fronting detection
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
 - `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support
 - `DEBUG`: Enable verbose logging
@@ -163,7 +167,7 @@ Optional:
 
 ### Configuration Management
 - All JSON configs are in `config/` with `.example.json` files showing structure
-- Configuration structs are centralized in `types.go` (540+ lines)
+- Configuration structs are centralized in `types.go` (700+ lines)
 - Environment variable processing in `proxy.go` during startup via `Register()` function
 - Configuration validation functions per feature (e.g., `validateLogSource()` in logcollector.go)
 - Real-time configuration status available via `/api/config/status` endpoint
@@ -174,6 +178,7 @@ Optional:
 - Reputation checking: Multiple providers (VirusTotal, AbuseIPDB, URLVoid, custom), configured via `REPUTATION_CONFIG`
 - AI analysis: OpenAI/Claude/local model integration, configured via `AI_CONFIG`
 - Custom scripts: User-provided validation, configured via `CUSTOM_SCRIPT_CONFIG`
+- SNI inspection: TLS connection interception and domain fronting detection, configured via `SNI_INSPECTION_CONFIG`
 - Memory safety: Bounded caches with automatic cleanup (security.go:2259-2434)
 
 ### Authentication System
@@ -350,6 +355,12 @@ The Web UI provides a comprehensive REST API for managing firewall rules and sec
 - `/api/logcollector/stats` - Log collector statistics
 - `/api/logcollector/config` - Log collector configuration
 
+### SNI Inspection APIs
+- `/api/sni/stats` - SNI inspection statistics and connection metrics
+- `/api/sni/connections` - List active SNI connections
+- `/api/sni/config` - SNI inspection configuration
+- `/api/sni/validate` - Validate specific client/domain/SNI combinations
+
 ### Authentication Endpoints
 - `/login` - User authentication (rate limited: 5 attempts/minute)
 - `/logout` - Session termination
@@ -376,7 +387,15 @@ Recent updates have unified domain pattern matching across all features:
 - **API Security**: Comprehensive credential sanitization in configuration status endpoints
 - **Resource Management**: Script execution timeouts, cleanup routines, graceful shutdown handling
 
+### SNI Inspection & Domain Fronting Detection (2025)
+- **TLS Connection Interception**: New SNI inspection system intercepts TLS connections to validate domain authenticity
+- **Domain Fronting Protection**: Detects when clients resolve one domain but connect to another via SNI header manipulation
+- **Per-Client/Domain Policies**: Flexible configuration allowing SNI inspection to be enabled selectively based on client IPs or domain patterns
+- **Real-time Monitoring**: Comprehensive statistics and active connection tracking with API endpoints for management
+- **Security Integration**: Seamlessly integrates with existing blacklisting, reputation checking, and AI analysis features
+
 ### Testing & Validation
-- **Security Test Coverage**: 89+ test functions including comprehensive shell injection prevention tests
+- **Security Test Coverage**: 110+ test functions including comprehensive shell injection prevention tests and SNI inspection validation
 - **CNAME Security Testing**: Dedicated test suite for CNAME blacklist bypass scenarios
 - **Redis Key Validation**: Extensive testing for Redis key parsing and validation security
+- **SNI Inspection Tests**: Complete test suite for TLS ClientHello parsing, domain validation, and proxy functionality
