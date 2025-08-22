@@ -87,18 +87,38 @@ dfirewall includes a built-in web interface for viewing and managing firewall ru
 # Enable web UI on port 8080
 WEB_UI_PORT=8080
 ```
-<img width="1476" height="1268" alt="Screenshot from 2025-08-01 09-16-27" src="https://github.com/user-attachments/assets/2bd3206d-cc91-4bb6-b727-56ad53520b49" />
+
+<!-- TODO: Add updated screenshot showing the new tabbed interface -->
+*Screenshot to be updated with new tabbed security interface*
 
 Once enabled, access the web interface at `http://localhost:8080` (or your server's IP). The web UI provides:
 
+### Main Dashboard
 - **Real-time Statistics**: View total rules, active clients, unique domains, and IPs
-- **Rule Listing**: See all active firewall rules with TTL and expiration times
+- **Rule Listing**: Two view modes - grouped by client or traditional table view
 - **Rule Management**: Delete individual rules manually
-- **Blacklist Management**: Add/remove IPs and domains from blacklists
-- **Reputation Checking**: Check IP/domain reputation with threat intelligence providers
-- **AI Analysis**: Analyze domains and IPs for threats using AI providers
-- **SNI Inspection Monitoring**: View SNI connection statistics and active connections
+- **Client History**: View detailed DNS lookup history for specific clients
+- **All Clients**: Browse all clients that have made DNS requests
 - **Auto-refresh**: Interface updates every 30 seconds automatically
+
+### Security Management (Tabbed Interface)
+The Web UI now includes a dedicated **🛡️ Security** section with organized tabs:
+
+#### 🚫 Blacklist Management Tab
+- Add/remove IPs and domains from blacklists
+- View current blacklist entries with removal options
+- Real-time blacklist updates
+
+#### 🤖 Reputation & AI Analysis Tab  
+- Check IP/domain reputation with threat intelligence providers
+- AI-powered threat analysis using configured AI providers
+- Interactive analysis results with detailed scoring and reasoning
+
+### Additional Features
+- **Settings Panel**: Configure auto-refresh intervals and view system status
+- **SNI Inspection Monitoring**: View SNI connection statistics and active connections (when enabled)
+- **Responsive Design**: Optimized button layout that fits on one line
+- **Clean Navigation**: Organized top navigation with compact, intuitive buttons
 
 ### Web UI Authentication and Security
 The Web UI supports HTTPS encryption, password authentication, LDAP integration, and header-based authentication for reverse proxy setups.

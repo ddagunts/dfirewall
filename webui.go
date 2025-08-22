@@ -183,7 +183,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         
         /* View Toggle Buttons */
         .view-toggle { margin: 20px 0; text-align: center; }
-        .view-btn { background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 0 5px; }
+        .view-btn { background: #6c757d; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; margin: 0 3px; font-size: 13px; white-space: nowrap; flex-shrink: 0; }
         .view-btn.active { background: #007acc; }
         .view-btn:hover { background: #5a6268; }
         .view-btn.active:hover { background: #0056b3; }
@@ -228,14 +228,15 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             background: #6c757d; 
             color: white; 
             border: none; 
-            padding: 10px 20px; 
+            padding: 8px 12px; 
             border-radius: 5px; 
             cursor: pointer; 
             text-decoration: none; 
             display: inline-block; 
-            font-size: 14px;
-            min-width: 160px;
+            font-size: 13px;
             text-align: center;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
         .top-nav-btn:hover { background: #5a6268; }
         .top-nav-btn.refresh { background: #28a745; }
@@ -249,21 +250,47 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
         .empty-state { text-align: center; padding: 60px 20px; color: #666; }
         .empty-state h3 { color: #999; margin-bottom: 10px; }
         .empty-state p { font-size: 14px; line-height: 1.5; }
+        
+        /* Tab styling */
+        .tab-container { margin-top: 30px; border-top: 2px solid #007acc; }
+        .tab-nav { display: flex; background: #f8f9fa; border-bottom: 1px solid #ddd; margin: 0; padding: 0; list-style: none; }
+        .tab-nav li { margin: 0; }
+        .tab-nav button { 
+            background: none; 
+            border: none; 
+            padding: 15px 25px; 
+            cursor: pointer; 
+            border-bottom: 3px solid transparent; 
+            font-size: 14px; 
+            color: #495057;
+            transition: all 0.3s ease;
+        }
+        .tab-nav button:hover { background: #e9ecef; color: #007acc; }
+        .tab-nav button.active { 
+            background: white; 
+            color: #007acc; 
+            border-bottom-color: #007acc; 
+            font-weight: bold;
+        }
+        .tab-content { background: white; padding: 25px; border-radius: 0 0 8px 8px; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>dfirewall - Firewall Rule Management</h1>
         
-        <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                <button class="top-nav-btn refresh" onclick="loadData()">🔄 Refresh Data</button>
-                <a href="/api/docs" target="_blank" class="top-nav-btn">📖 API Documentation</a>
+        <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                <button class="top-nav-btn refresh" onclick="loadData()">🔄 Refresh</button>
+                <a href="/api/docs" target="_blank" class="top-nav-btn">📖 API Docs</a>
                 <button class="top-nav-btn" onclick="toggleSettings()">⚙️ Settings</button>
-                <button class="top-nav-btn" onclick="toggleClientHistory()">📊 Client History</button>
-                <button class="top-nav-btn" onclick="toggleAllClients()">👥 All Clients</button>
-                <button class="view-btn active" id="groupedViewBtn" onclick="switchView('grouped')">👥 Grouped by Client</button>
-                <button class="view-btn" id="tableViewBtn" onclick="switchView('table')">📋 Table View</button>
+                <button class="top-nav-btn" onclick="toggleClientHistory()">📊 History</button>
+                <button class="top-nav-btn" onclick="toggleAllClients()">👥 Clients</button>
+                <button class="top-nav-btn" onclick="toggleSecurityPanel()">🛡️ Security</button>
+                <button class="view-btn active" id="groupedViewBtn" onclick="switchView('grouped')">👥 Grouped</button>
+                <button class="view-btn" id="tableViewBtn" onclick="switchView('table')">📋 Table</button>
             </div>
             <div id="authStatus" style="display: none;">
                 <span style="color: #666; margin-right: 10px;">Logged in as: <strong id="currentUser">-</strong></span>
@@ -395,6 +422,66 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             </div>
         </div>
         
+        <!-- Security Management Panel -->
+        <div id="securityPanel" style="display: none; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 0; margin-bottom: 20px;">
+            <div class="tab-nav" style="margin: 0; border-radius: 8px 8px 0 0; overflow: hidden;">
+                <button class="tab-btn active" onclick="switchSecurityTab('blacklist')" style="border-radius: 8px 0 0 0;">🚫 Blacklist Management</button>
+                <button class="tab-btn" onclick="switchSecurityTab('analysis')">🤖 Reputation & AI Analysis</button>
+            </div>
+            <div style="padding: 25px; background: white; border-radius: 0 0 8px 8px;">
+                <!-- Blacklist Management Tab -->
+                <div id="blacklistSecurityTab" class="tab-panel active">
+                    <h3 style="margin: 0 0 20px 0; color: #495057;">🚫 Blacklist Management</h3>
+                    
+                    <div style="display: flex; gap: 20px; margin: 20px 0;">
+                        <div style="flex: 1;">
+                            <h4 style="margin: 0 0 15px 0;">Add to Blacklist</h4>
+                            <div style="margin-bottom: 10px;">
+                                <input type="text" id="ipInput" placeholder="Enter IP address" style="width: 70%; padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 3px;">
+                                <button onclick="addIPToBlacklist()" style="background: #dc3545; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer;">Block IP</button>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <input type="text" id="domainInput" placeholder="Enter domain name" style="width: 70%; padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 3px;">
+                                <button onclick="addDomainToBlacklist()" style="background: #dc3545; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer;">Block Domain</button>
+                            </div>
+                        </div>
+                        
+                        <div style="flex: 1;">
+                            <h4 style="margin: 0 0 15px 0;">Current Blacklists</h4>
+                            <button onclick="loadBlacklists()" style="background: #17a2b8; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer; margin-bottom: 10px;">🔄 Refresh Blacklists</button>
+                            <div id="blacklistData" style="font-size: 12px; max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 3px; background: #f8f9fa;"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Reputation & AI Analysis Tab -->
+                <div id="analysisSecurityTab" class="tab-panel">
+                    <h3 style="margin: 0 0 20px 0; color: #495057;">🤖 Reputation & AI Analysis</h3>
+                    
+                    <div style="display: flex; gap: 20px; margin: 20px 0;">
+                        <div style="flex: 1;">
+                            <h4 style="margin: 0 0 15px 0;">Analyze Target</h4>
+                            <div style="margin-bottom: 15px;">
+                                <input type="text" id="analyzeInput" placeholder="Enter IP address or domain name" style="width: 60%; padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 3px;">
+                                <select id="analyzeType" style="padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 3px;">
+                                    <option value="ip">IP Address</option>
+                                    <option value="domain">Domain</option>
+                                </select>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <button onclick="checkReputation()" style="background: #ffc107; color: black; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer; margin-right: 10px;">🛡️ Check Reputation</button>
+                                <button onclick="analyzeWithAI()" style="background: #17a2b8; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer;">🤖 AI Analysis</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="analysisResults" style="margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background: #f8f9fa; min-height: 50px; max-height: 400px; overflow-y: auto;">
+                        <em style="color: #666;">Analysis results will appear here...</em>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
         <div class="stats" id="stats">
             <div class="stat-box">
                 <h3 id="totalRules">-</h3>
@@ -438,56 +525,6 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             </tbody>
         </table>
         
-        <!-- Blacklist Management Section -->
-        <div style="margin-top: 40px; padding-top: 20px; border-top: 2px solid #007acc;">
-            <h2>Blacklist Management</h2>
-            
-            <div style="display: flex; gap: 20px; margin: 20px 0;">
-                <div style="flex: 1;">
-                    <h3>Add to Blacklist</h3>
-                    <div style="margin-bottom: 10px;">
-                        <input type="text" id="ipInput" placeholder="Enter IP address" style="width: 70%; padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 3px;">
-                        <button onclick="addIPToBlacklist()" style="background: #dc3545; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer;">Block IP</button>
-                    </div>
-                    <div style="margin-bottom: 10px;">
-                        <input type="text" id="domainInput" placeholder="Enter domain name" style="width: 70%; padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 3px;">
-                        <button onclick="addDomainToBlacklist()" style="background: #dc3545; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer;">Block Domain</button>
-                    </div>
-                </div>
-                
-                <div style="flex: 1;">
-                    <h3>Current Blacklists</h3>
-                    <button onclick="loadBlacklists()" style="background: #17a2b8; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer; margin-bottom: 10px;">🔄 Refresh Blacklists</button>
-                    <div id="blacklistData" style="font-size: 12px; max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 3px; background: #f8f9fa;"></div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Reputation & AI Analysis Section -->
-        <div style="margin-top: 40px; padding-top: 20px; border-top: 2px solid #007acc;">
-            <h2>Reputation & AI Analysis</h2>
-            
-            <div style="display: flex; gap: 20px; margin: 20px 0;">
-                <div style="flex: 1;">
-                    <h3>Analyze Target</h3>
-                    <div style="margin-bottom: 15px;">
-                        <input type="text" id="analyzeInput" placeholder="Enter IP address or domain name" style="width: 60%; padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 3px;">
-                        <select id="analyzeType" style="padding: 8px; margin-right: 10px; border: 1px solid #ddd; border-radius: 3px;">
-                            <option value="ip">IP Address</option>
-                            <option value="domain">Domain</option>
-                        </select>
-                    </div>
-                    <div style="margin-bottom: 10px;">
-                        <button onclick="checkReputation()" style="background: #ffc107; color: black; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer; margin-right: 10px;">🛡️ Check Reputation</button>
-                        <button onclick="analyzeWithAI()" style="background: #17a2b8; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer;">🤖 AI Analysis</button>
-                    </div>
-                </div>
-            </div>
-            
-            <div id="analysisResults" style="margin-top: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background: #f8f9fa; min-height: 50px; max-height: 400px; overflow-y: auto;">
-                <em style="color: #666;">Analysis results will appear here...</em>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -1553,6 +1590,46 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+        
+        // Security panel management functions
+        function toggleSecurityPanel() {
+            const panel = document.getElementById('securityPanel');
+            if (panel.style.display === 'none' || panel.style.display === '') {
+                panel.style.display = 'block';
+                // Load blacklists when opening panel for the first time
+                loadBlacklists();
+            } else {
+                panel.style.display = 'none';
+            }
+        }
+        
+        function switchSecurityTab(tabName) {
+            // Hide all security tab panels
+            const panels = document.querySelectorAll('#securityPanel .tab-panel');
+            panels.forEach(panel => {
+                panel.classList.remove('active');
+            });
+            
+            // Remove active class from all security tab buttons
+            const buttons = document.querySelectorAll('#securityPanel .tab-btn');
+            buttons.forEach(button => {
+                button.classList.remove('active');
+            });
+            
+            // Show the selected tab panel
+            const selectedPanel = document.getElementById(tabName + 'SecurityTab');
+            if (selectedPanel) {
+                selectedPanel.classList.add('active');
+            }
+            
+            // Add active class to the clicked button
+            event.target.classList.add('active');
+            
+            // Load data specific to the tab if needed
+            if (tabName === 'blacklist') {
+                loadBlacklists();
+            }
         }
         
         // Load data on page load

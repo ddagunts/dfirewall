@@ -45,6 +45,7 @@ services:
       - "INVOKE_ALWAYS=1"
       - "SYNC_SCRIPT_EXECUTION=1" # Execute scripts synchronously for reliable connectivity
       #- "HANDLE_ALL_IPS=1"
+      - "ENABLE_AAAA_PROCESSING=false"
     hostname: "dfirewall"
     image: "dfirewall:latest"
     # Override Dockerfile's nobody user for demonstration with local iptables/ipset scripts
