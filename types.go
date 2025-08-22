@@ -63,6 +63,21 @@ type ClientHistoryResponse struct {
 	EndTime      time.Time          `json:"end_time"`
 }
 
+// ClientInfo represents summary information about a client
+type ClientInfo struct {
+	ClientIP         string    `json:"client_ip"`
+	FirstSeen        time.Time `json:"first_seen"`
+	LastSeen         time.Time `json:"last_seen"`
+	TotalLookups     int64     `json:"total_lookups"`
+	ActiveRuleCount  int64     `json:"active_rule_count,omitempty"`
+}
+
+// AllClientsResponse represents the API response for listing all clients
+type AllClientsResponse struct {
+	TotalClients int64        `json:"total_clients"`
+	Clients      []ClientInfo `json:"clients"`
+}
+
 // ClientScriptConfig represents per-client script configuration
 type ClientScriptConfig struct {
 	// Pattern for matching client IPs (supports CIDR notation, single IPs, or regex patterns)

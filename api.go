@@ -1294,3 +1294,105 @@ func handleAPIClientHistory(w http.ResponseWriter, r *http.Request, redisClient 
 
 	json.NewEncoder(w).Encode(response)
 }
+
+func handleAPIAllClients(w http.ResponseWriter, r *http.Request, redisClient *redis.Client) {
+	// Set security headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Content-Type", "application/json")
+
+	ctx := context.Background()
+	
+	// Get all client history keys using SCAN to avoid blocking Redis
+	var cursor uint64
+	var allKeys []string
+	
+	for {
+		keys, newCursor, err := redisClient.Scan(ctx, cursor, "history:client:*", 100).Result()
+		if err != nil {
+			http.Error(w, "Error scanning client keys: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		
+		allKeys = append(allKeys, keys...)
+		cursor = newCursor
+		
+		if cursor == 0 {
+			break
+		}
+	}
+	
+	if len(allKeys) == 0 {
+		// No clients found
+		response := AllClientsResponse{
+			TotalClients: 0,
+			Clients:      []ClientInfo{},
+		}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+	
+	// Extract client information from each key
+	clients := make([]ClientInfo, 0, len(allKeys))
+	
+	for _, key := range allKeys {
+		// Extract client IP from key format: history:client:{clientIP}
+		clientIP := strings.TrimPrefix(key, "history:client:")
+		if clientIP == key || clientIP == "" {
+			continue // Skip if not properly formatted
+		}
+		
+		// Get total lookups count
+		totalLookups, err := redisClient.ZCard(ctx, key).Result()
+		if err != nil {
+			log.Printf("WARNING: Error getting lookup count for client %s: %v", clientIP, err)
+			totalLookups = 0
+		}
+		
+		// Get first and last entry timestamps
+		var firstSeen, lastSeen time.Time
+		
+		// Get oldest entry (lowest score)
+		oldestEntries, err := redisClient.ZRangeWithScores(ctx, key, 0, 0).Result()
+		if err == nil && len(oldestEntries) > 0 {
+			firstSeen = time.Unix(int64(oldestEntries[0].Score), 0)
+		}
+		
+		// Get newest entry (highest score)  
+		newestEntries, err := redisClient.ZRevRangeWithScores(ctx, key, 0, 0).Result()
+		if err == nil && len(newestEntries) > 0 {
+			lastSeen = time.Unix(int64(newestEntries[0].Score), 0)
+		}
+		
+		// Count active firewall rules for this client
+		activeRulesPattern := fmt.Sprintf("rules:%s|*", clientIP)
+		activeRuleKeys, err := redisClient.Keys(ctx, activeRulesPattern).Result()
+		var activeRuleCount int64 = 0
+		if err == nil {
+			activeRuleCount = int64(len(activeRuleKeys))
+		}
+		
+		clientInfo := ClientInfo{
+			ClientIP:        clientIP,
+			FirstSeen:       firstSeen,
+			LastSeen:        lastSeen,
+			TotalLookups:    totalLookups,
+			ActiveRuleCount: activeRuleCount,
+		}
+		
+		clients = append(clients, clientInfo)
+	}
+	
+	// Sort clients by last seen (newest first)
+	sort.Slice(clients, func(i, j int) bool {
+		return clients[i].LastSeen.After(clients[j].LastSeen)
+	})
+	
+	response := AllClientsResponse{
+		TotalClients: int64(len(clients)),
+		Clients:      clients,
+	}
+	
+	json.NewEncoder(w).Encode(response)
+}

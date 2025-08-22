@@ -126,6 +126,11 @@ func startWebUI(port string, redisClient *redis.Client) {
 		handleAPIClientHistory(w, r, redisClient)
 	}))
 	
+	// All clients endpoint
+	mux.HandleFunc("/api/clients", protectedHandler(func(w http.ResponseWriter, r *http.Request) {
+		handleAPIAllClients(w, r, redisClient)
+	}))
+	
 	server := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux, // Use our custom ServeMux instead of default
@@ -256,6 +261,7 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
                 <a href="/api/docs" target="_blank" class="top-nav-btn">📖 API Documentation</a>
                 <button class="top-nav-btn" onclick="toggleSettings()">⚙️ Settings</button>
                 <button class="top-nav-btn" onclick="toggleClientHistory()">📊 Client History</button>
+                <button class="top-nav-btn" onclick="toggleAllClients()">👥 All Clients</button>
                 <button class="view-btn active" id="groupedViewBtn" onclick="switchView('grouped')">👥 Grouped by Client</button>
                 <button class="view-btn" id="tableViewBtn" onclick="switchView('table')">📋 Table View</button>
             </div>
@@ -350,6 +356,42 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             </div>
             
             <div id="historyError" style="display: none; color: #dc3545; text-align: center; padding: 20px;">
+            </div>
+        </div>
+        
+        <!-- All Clients Panel -->
+        <div id="allClientsPanel" style="display: none; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+            <h3 style="margin: 0 0 15px 0; color: #495057;">👥 All Clients Ever Seen</h3>
+            <div style="display: flex; gap: 15px; align-items: center; margin-bottom: 20px;">
+                <button onclick="loadAllClients()" style="background: #007acc; color: white; border: none; padding: 8px 20px; border-radius: 3px; cursor: pointer;">🔍 Load Clients</button>
+                <span id="allClientsCount" style="color: #666; font-size: 14px;"></span>
+            </div>
+            
+            <!-- Clients Results -->
+            <div id="allClientsResults" style="display: none;">
+                <div style="max-height: 500px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; background: white;">
+                    <table style="width: 100%; margin: 0;">
+                        <thead>
+                            <tr style="background: #f8f9fa;">
+                                <th>Client IP</th>
+                                <th>First Seen</th>
+                                <th>Last Seen</th>
+                                <th>Total Lookups</th>
+                                <th>Active Rules</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="allClientsTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div id="allClientsLoading" style="display: none; text-align: center; padding: 20px; color: #666;">
+                Loading clients...
+            </div>
+            
+            <div id="allClientsError" style="display: none; color: #dc3545; text-align: center; padding: 20px;">
             </div>
         </div>
         
@@ -1412,6 +1454,99 @@ func handleUIHome(w http.ResponseWriter, r *http.Request) {
             document.getElementById('historyError').style.display = 'block';
             document.getElementById('historyResults').style.display = 'none';
             document.getElementById('historyLoading').style.display = 'none';
+        }
+        
+        // All Clients Functions
+        function toggleAllClients() {
+            const panel = document.getElementById('allClientsPanel');
+            if (panel.style.display === 'none' || panel.style.display === '') {
+                panel.style.display = 'block';
+            } else {
+                panel.style.display = 'none';
+                // Clear results when closing
+                document.getElementById('allClientsResults').style.display = 'none';
+                document.getElementById('allClientsError').style.display = 'none';
+            }
+        }
+        
+        async function loadAllClients() {
+            document.getElementById('allClientsLoading').style.display = 'block';
+            document.getElementById('allClientsResults').style.display = 'none';
+            document.getElementById('allClientsError').style.display = 'none';
+            
+            try {
+                const response = await fetch('/api/clients');
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                }
+                
+                const data = await response.json();
+                displayAllClients(data);
+                
+            } catch (error) {
+                console.error('Error loading all clients:', error);
+                showAllClientsError('Failed to load clients: ' + error.message);
+            } finally {
+                document.getElementById('allClientsLoading').style.display = 'none';
+            }
+        }
+        
+        function displayAllClients(data) {
+            // Update count
+            document.getElementById('allClientsCount').textContent = 'Total: ' + data.total_clients + ' clients';
+            
+            // Clear and populate table
+            const tbody = document.getElementById('allClientsTableBody');
+            tbody.innerHTML = '';
+            
+            if (data.clients && data.clients.length > 0) {
+                data.clients.forEach(client => {
+                    const row = document.createElement('tr');
+                    
+                    // Format timestamps
+                    const firstSeen = client.first_seen ? new Date(client.first_seen).toLocaleString() : '-';
+                    const lastSeen = client.last_seen ? new Date(client.last_seen).toLocaleString() : '-';
+                    
+                    // Action buttons
+                    const actions = '<button onclick="viewClientHistory(\'' + client.client_ip + '\')" style="background: #007acc; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer; margin-right: 5px; font-size: 12px;">📊 History</button>';
+                    
+                    row.innerHTML = '<td style="font-family: monospace;">' + escapeHtml(client.client_ip) + '</td>' +
+                        '<td style="font-family: monospace; font-size: 12px;">' + firstSeen + '</td>' +
+                        '<td style="font-family: monospace; font-size: 12px;">' + lastSeen + '</td>' +
+                        '<td style="text-align: right;">' + client.total_lookups.toLocaleString() + '</td>' +
+                        '<td style="text-align: right;">' + (client.active_rule_count || 0) + '</td>' +
+                        '<td>' + actions + '</td>';
+                    
+                    tbody.appendChild(row);
+                });
+            } else {
+                const row = document.createElement('tr');
+                row.innerHTML = '<td colspan="6" style="text-align: center; color: #666; padding: 20px;">No clients found</td>';
+                tbody.appendChild(row);
+            }
+            
+            // Show results
+            document.getElementById('allClientsResults').style.display = 'block';
+        }
+        
+        function showAllClientsError(message) {
+            document.getElementById('allClientsError').textContent = message;
+            document.getElementById('allClientsError').style.display = 'block';
+            document.getElementById('allClientsResults').style.display = 'none';
+            document.getElementById('allClientsLoading').style.display = 'none';
+        }
+        
+        function viewClientHistory(clientIP) {
+            // Show the client history panel
+            const historyPanel = document.getElementById('clientHistoryPanel');
+            historyPanel.style.display = 'block';
+            
+            // Fill in the client IP and load history
+            document.getElementById('clientIPInput').value = clientIP;
+            loadClientHistory();
+            
+            // Scroll to history panel
+            historyPanel.scrollIntoView({ behavior: 'smooth' });
         }
         
         function escapeHtml(text) {
