@@ -645,6 +645,10 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 				// pad TTL with per-client configured value (after clamping)
 				clientTTLPad := ttlConfig.getTTLPadding(from)
 				padTtl = ttl + uint32(clientTTLPad)
+				// ensure minimum padded TTL of 1 second for Redis/scripts, even if client gets TTL=0
+				if padTtl == 0 {
+					padTtl = 1
+				}
 
 				// respond with all records prior to first A record, and first A record
 				ipAddress, _ = netip.ParseAddr(arec.A.String())
@@ -665,6 +669,10 @@ func RegisterWithRedis(rt Route, redisClient *redis.Client) error {
 				// pad TTL with per-client configured value (after clamping)
 				clientTTLPad := ttlConfig.getTTLPadding(from)
 				padTtl = ttl + uint32(clientTTLPad)
+				// ensure minimum padded TTL of 1 second for Redis/scripts, even if client gets TTL=0
+				if padTtl == 0 {
+					padTtl = 1
+				}
 
 				// respond with all records prior to first AAAA record, and first AAAA record
 				ipAddress, _ = netip.ParseAddr(aaaarec.AAAA.String())
