@@ -14,11 +14,10 @@ It allows to create an IP firewall with the following features:
  - Turns any DNS block into a firewall block
  - SNI inspection to detect domain fronting and TLS connection abuse
 
-<img width="640" height="420" alt="image" src="https://github.com/user-attachments/assets/4367935c-7608-4f85-865e-f9bd2bbf2ca8" />
-<img width="642" height="237" alt="image" src="https://github.com/user-attachments/assets/9c561218-4357-4a5b-a09a-df67413e7bfa" />
-<img width="644" height="420" alt="image" src="https://github.com/user-attachments/assets/284dfbdd-d8c0-4383-b68f-02f900324f28" />
-<img width="640" height="325" alt="image" src="https://github.com/user-attachments/assets/870c8e65-cabc-47e8-a163-92e9399b331c" />
-<img width="641" height="338" alt="image" src="https://github.com/user-attachments/assets/9c64b27f-d26f-4928-8438-913bd202e816" />
+<img width="740" height="470" alt="image" src="https://github.com/user-attachments/assets/4367935c-7608-4f85-865e-f9bd2bbf2ca8" />
+<img width="744" height="470" alt="image" src="https://github.com/user-attachments/assets/284dfbdd-d8c0-4383-b68f-02f900324f28" />
+<img width="740" height="375" alt="image" src="https://github.com/user-attachments/assets/870c8e65-cabc-47e8-a163-92e9399b331c" />
+<img width="741" height="378" alt="image" src="https://github.com/user-attachments/assets/9c64b27f-d26f-4928-8438-913bd202e816" />
 
 # Configuration
 
