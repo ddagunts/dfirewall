@@ -14,6 +14,12 @@ It allows to create an IP firewall with the following features:
  - Turns any DNS block into a firewall block
  - SNI inspection to detect domain fronting and TLS connection abuse
 
+<img width="640" height="420" alt="image" src="https://github.com/user-attachments/assets/4367935c-7608-4f85-865e-f9bd2bbf2ca8" />
+<img width="642" height="237" alt="image" src="https://github.com/user-attachments/assets/9c561218-4357-4a5b-a09a-df67413e7bfa" />
+<img width="644" height="420" alt="image" src="https://github.com/user-attachments/assets/284dfbdd-d8c0-4383-b68f-02f900324f28" />
+<img width="640" height="325" alt="image" src="https://github.com/user-attachments/assets/870c8e65-cabc-47e8-a163-92e9399b331c" />
+<img width="641" height="338" alt="image" src="https://github.com/user-attachments/assets/9c64b27f-d26f-4928-8438-913bd202e816" />
+
 # Configuration
 
 dfirewall is configured entirely through environment variables and JSON configuration files for advanced features. There are no command-line arguments - all configuration is done via environment variables.
@@ -87,9 +93,6 @@ dfirewall includes a built-in web interface for viewing and managing firewall ru
 # Enable web UI on port 8080
 WEB_UI_PORT=8080
 ```
-
-<!-- TODO: Add updated screenshot showing the new tabbed interface -->
-*Screenshot to be updated with new tabbed security interface*
 
 Once enabled, access the web interface at `http://localhost:8080` (or your server's IP). The web UI provides:
 
