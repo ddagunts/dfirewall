@@ -5,7 +5,7 @@
     "expire_script": "/scripts/expire_generic.sh",
     "invoke_always": true,
     "sync_execution": true,
-    "ttl_grace_period_seconds": 90,
+    "ttl_grace_period_seconds": 600,
     "environment": {
       "DEFAULT_POLICY": "deny"
     }
