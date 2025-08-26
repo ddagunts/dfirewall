@@ -34,6 +34,9 @@ REDIS=redis://127.0.0.1:6379 # Redis connection string
 # Optional
 PORT=53                      # listening port
 WEB_UI_PORT=8080            # web interface port
+DNS_BIND_IP=127.0.0.1       # bind DNS to specific interface (default: all)
+WEBUI_BIND_IP=127.0.0.1     # bind Web UI to specific interface (default: all)
+ENABLE_AAAA_PROCESSING=true # enable IPv6 (AAAA record) processing
 ```
 
 ## Advanced Upstream DNS Routing

@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -50,8 +51,23 @@ func startWebUI(port string, redisClient *redis.Client) {
 	// Start rate limit cleanup
 	startRateLimitCleanup()
 	
-	log.Printf("Starting web UI server on port %s (HTTPS: %v, Auth: %v)", 
-		port, authConfig.HTTPSEnabled, isAuthEnabled())
+	// Web UI interface binding configuration
+	webuiBindIP := os.Getenv("WEBUI_BIND_IP")
+	if webuiBindIP == "" {
+		webuiBindIP = "" // Default to bind to all interfaces (0.0.0.0)
+		log.Printf("Web UI will bind to all interfaces, set WEBUI_BIND_IP to restrict")
+	} else {
+		if err := validateBindIP(webuiBindIP); err != nil {
+			log.Fatalf("Invalid WEBUI_BIND_IP: %v", err)
+		}
+		log.Printf("Web UI will bind to interface: %s", webuiBindIP)
+	}
+	
+	// Construct Web UI server address
+	webuiAddr := webuiBindIP + ":" + port
+	
+	log.Printf("Starting web UI server on %s (HTTPS: %v, Auth: %v)", 
+		webuiAddr, authConfig.HTTPSEnabled, isAuthEnabled())
 	
 	// Create a new ServeMux to avoid conflicts with global default ServeMux
 	mux := http.NewServeMux()
@@ -132,7 +148,7 @@ func startWebUI(port string, redisClient *redis.Client) {
 	}))
 	
 	server := &http.Server{
-		Addr:    ":" + port,
+		Addr:    webuiAddr,
 		Handler: mux, // Use our custom ServeMux instead of default
 		// Set reasonable timeouts to prevent resource exhaustion
 		ReadTimeout:  30 * time.Second,  // Increased for authentication

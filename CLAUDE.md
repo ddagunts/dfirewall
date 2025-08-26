@@ -90,6 +90,12 @@ docker-compose exec dfirewall go vet ./...
 # Run locally (requires Redis and proper environment variables)
 UPSTREAM=1.1.1.1:53 REDIS=redis://127.0.0.1:6379 ./dfirewall
 
+# Run with specific interface binding for enhanced security
+DNS_BIND_IP=127.0.0.1 WEBUI_BIND_IP=127.0.0.1 UPSTREAM=1.1.1.1:53 REDIS=redis://127.0.0.1:6379 ./dfirewall
+
+# Run as daemon with PID file
+DAEMON=true PID_FILE=/var/run/dfirewall.pid UPSTREAM=1.1.1.1:53 REDIS=redis://127.0.0.1:6379 ./dfirewall
+
 # Build and run with Docker Compose
 docker-compose up -d
 
@@ -119,6 +125,8 @@ Required:
 
 Optional:
 - `PORT`: Listening port (default: 53)
+- `DNS_BIND_IP`: IP address to bind DNS server to (default: all interfaces). Set to specific IP (e.g., "127.0.0.1") to restrict DNS interface access. Supports IPv4 and IPv6 addresses. System validates IP exists on network interfaces
+- `WEBUI_BIND_IP`: IP address to bind Web UI server to (default: all interfaces). Set to specific IP (e.g., "127.0.0.1") to restrict Web UI interface access. Supports IPv4 and IPv6 addresses. System validates IP exists on network interfaces
 - `INVOKE_SCRIPT`: Path to executable script for firewall management (global fallback)
 - `INVOKE_ALWAYS`: Execute script for every IP encounter (not just new ones, global fallback)
 - `SYNC_SCRIPT_EXECUTION`: Execute scripts synchronously to ensure firewall rules are created before DNS response (global fallback)
@@ -158,6 +166,8 @@ Optional:
 - `HANDLE_ALL_IPS`: When set, process all A records in DNS response instead of just the first one
 - `ENABLE_EDNS`: Enable EDNS client subnet with proper IPv4/IPv6 support
 - `ENABLE_AAAA_PROCESSING`: Enable/disable IPv6 (AAAA record) processing (default: true, set to "false" or "0" to disable)
+- `DAEMON`: Run as daemon process in background (true/false or 1/0)
+- `PID_FILE`: Path to PID file when running as daemon (e.g., "/var/run/dfirewall.pid")
 - `DEBUG`: Enable verbose logging
 
 ## Code Organization
@@ -306,6 +316,85 @@ Set `UPSTREAM_CONFIG` environment variable to a JSON configuration file:
 - **Security policies**: Route suspicious clients to filtered DNS services
 - **Geographic routing**: Route based on client location to regional DNS servers
 - **Development environments**: Route test domains to development DNS servers
+
+## Network Security & Interface Binding
+
+dfirewall supports binding DNS and Web UI services to specific network interfaces for enhanced security and network isolation.
+
+### Interface Binding Configuration
+
+**DNS Server Binding (`DNS_BIND_IP`):**
+- Controls which network interface the DNS server binds to
+- Default: binds to all interfaces (0.0.0.0) - accepts DNS requests from any network
+- Security: Set to `127.0.0.1` to only accept local DNS queries
+- Enterprise: Set to specific internal IP (e.g., `10.0.1.100`) for internal-only DNS
+- Validation: System automatically validates IP exists on network interfaces
+
+**Web UI Binding (`WEBUI_BIND_IP`):**
+- Controls which network interface the Web UI server binds to  
+- Default: binds to all interfaces (0.0.0.0) - accessible from any network
+- Security: Set to `127.0.0.1` to only allow local management access
+- Enterprise: Set to specific management IP for administrative network isolation
+- Validation: System automatically validates IP exists on network interfaces
+
+### Security Use Cases
+
+**Localhost-only Deployment:**
+```bash
+# Only accept DNS queries and management from localhost
+DNS_BIND_IP=127.0.0.1 WEBUI_BIND_IP=127.0.0.1 ./dfirewall
+```
+
+**Internal Network Deployment:**
+```bash  
+# DNS available on internal network, management restricted to admin subnet
+DNS_BIND_IP=10.0.1.100 WEBUI_BIND_IP=192.168.100.50 ./dfirewall
+```
+
+**DMZ Deployment:**
+```bash
+# DNS on DMZ interface, management on internal interface  
+DNS_BIND_IP=172.16.50.10 WEBUI_BIND_IP=10.0.1.100 ./dfirewall
+```
+
+### Network Interface Validation
+
+The `validateBindIP()` function performs comprehensive validation:
+
+1. **IP Format Validation**: Ensures valid IPv4/IPv6 format
+2. **Interface Existence**: Checks if IP exists on system network interfaces  
+3. **Unspecified Address Support**: Allows 0.0.0.0 and :: for all-interface binding
+4. **Graceful Fallback**: Warns if IP not found but allows bind operation to proceed
+5. **IPv6 Support**: Full support for IPv6 interface binding
+
+### Daemon Mode & Process Management
+
+**Daemon Mode (`DAEMON`):**
+- Run dfirewall as background daemon process
+- Automatically creates new process session
+- Redirects stdin/stdout/stderr to /dev/null (unless DEBUG=1)
+- Changes working directory to / to avoid filesystem locks
+
+**PID File Management (`PID_FILE`):**
+- Creates PID file for process tracking
+- Automatically creates parent directories
+- Removes PID file on graceful shutdown
+- Essential for service management and monitoring
+
+Example daemon deployment:
+```bash
+# Run as daemon with PID file and interface binding
+DAEMON=true PID_FILE=/var/run/dfirewall.pid DNS_BIND_IP=127.0.0.1 WEBUI_BIND_IP=127.0.0.1 ./dfirewall
+```
+
+### Docker Network Considerations
+
+When using Docker, interface binding interacts with Docker's network model:
+
+- **Host Network Mode**: Interface binding works with host system interfaces
+- **Bridge Network Mode**: Binding to specific IPs may require port mapping configuration  
+- **Container IP Validation**: System validates IPs within container's network namespace
+- **Security**: Use interface binding even in containers for defense-in-depth
 
 ## Important Implementation Notes
 

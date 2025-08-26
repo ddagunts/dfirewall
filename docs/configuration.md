@@ -17,7 +17,26 @@ REDIS=redis://127.0.0.1:6379 # location of Redis (REQUIRED)
 PORT=53                       # listening port (default: 53)
 DEBUG=true                    # enable verbose logging
 ENABLE_EDNS=true              # enable EDNS Client Subnet with requesting client IP (supports IPv4/IPv6)
+ENABLE_AAAA_PROCESSING=true   # enable IPv6 (AAAA record) processing (default: true, set to "false" or "0" to disable)
 HANDLE_ALL_IPS=true           # process all A records in DNS response instead of just the first one
+```
+
+### Network Interface Binding
+```bash
+DNS_BIND_IP=127.0.0.1         # IP address to bind DNS server to (default: all interfaces)
+WEBUI_BIND_IP=127.0.0.1       # IP address to bind Web UI server to (default: all interfaces) 
+```
+
+**Security Configuration Examples:**
+- **Localhost only:** `DNS_BIND_IP=127.0.0.1 WEBUI_BIND_IP=127.0.0.1`
+- **Internal network:** `DNS_BIND_IP=10.0.1.100 WEBUI_BIND_IP=192.168.1.50`
+- **IPv6 support:** `DNS_BIND_IP=::1 WEBUI_BIND_IP=2001:db8::1`
+- **Default (all interfaces):** Omit both variables entirely
+
+### Process Management
+```bash
+DAEMON=true                   # run as background daemon process  
+PID_FILE=/var/run/dfirewall.pid # PID file location for daemon mode
 ```
 
 ### Advanced Upstream Configuration

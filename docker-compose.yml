@@ -42,10 +42,19 @@ services:
       #- "AI_CONFIG=/config/ai-config.json"  # Enable AI-powered threat detection :D
       #- "CUSTOM_SCRIPT_CONFIG=/config/custom-script-config.json" # Enable custom script validation
       - "WEB_UI_PORT=8080" # Enable web UI for rule management
+      - "DNS_BIND_IP=127.0.0.1" # Bind DNS to loopback only (secure: localhost-only DNS queries)
+      - "WEBUI_BIND_IP=127.0.0.1" # Bind Web UI to loopback only (secure: localhost-only management access)
+      # Network Interface Binding Options:
+      # Default (all interfaces): Remove DNS_BIND_IP and WEBUI_BIND_IP entirely  
+      # Internal network only: "DNS_BIND_IP=10.0.1.100" "WEBUI_BIND_IP=10.0.1.100"
+      # Split interfaces: "DNS_BIND_IP=172.16.0.10" "WEBUI_BIND_IP=192.168.1.50"
+      # IPv6 support: "DNS_BIND_IP=::1" "WEBUI_BIND_IP=2001:db8::1"
       - "INVOKE_ALWAYS=1"
       - "SYNC_SCRIPT_EXECUTION=1" # Execute scripts synchronously for reliable connectivity
       #- "HANDLE_ALL_IPS=1"
       - "ENABLE_AAAA_PROCESSING=false"
+      #- "DAEMON=true"  # Run as daemon process (useful for non-Docker deployments, enables background mode)
+      #- "PID_FILE=/var/run/dfirewall.pid"  # PID file location for daemon mode (requires writable directory)
     hostname: "dfirewall"
     image: "dfirewall:latest"
     # Override Dockerfile's nobody user for demonstration with local iptables/ipset scripts
