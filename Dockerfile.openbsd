@@ -1,0 +1,26 @@
+# Multi-stage build for OpenBSD ARM64 binary
+FROM golang:1.24-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Set CGO_ENABLED=0 for static binary and build for OpenBSD ARM64
+ENV CGO_ENABLED=0
+ENV GOOS=openbsd
+ENV GOARCH=arm64
+
+# Build the binary
+RUN go build -ldflags="-w -s" -o dfirewall-openbsd-arm64 .
+
