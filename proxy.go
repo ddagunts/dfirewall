@@ -725,6 +725,8 @@ func Register(rt Route) error {
 		}
 
 		// Process the response and extract IPs
+		var processedARR *dns.A // Track first processed A record for HANDLE_ALL_IPS logic
+		
 		for _, rr := range resp.Answer {
 			if rrType, ok := rr.(*dns.A); ok {
 				resolvedIP := rrType.A.String()
@@ -872,6 +874,11 @@ func Register(rt Route) error {
 					executeScript(from, resolvedIP, domain, ttl, "ALLOW", isNewRule)
 				}
 
+				// Track first processed A record for response modification
+				if processedARR == nil {
+					processedARR = rrType
+				}
+
 				// Only process first A record unless HANDLE_ALL_IPS is set
 				if handleAllIPs == "" {
 					break
@@ -986,6 +993,28 @@ func Register(rt Route) error {
 				if handleAllIPs == "" {
 					break
 				}
+			}
+		}
+
+		// If HANDLE_ALL_IPS is disabled, modify DNS response to only include first processed A record
+		if handleAllIPs == "" && processedARR != nil {
+			// Create new answer slice with only the first processed A record and non-A records
+			newAnswer := []dns.RR{}
+			
+			// Add the first processed A record
+			newAnswer = append(newAnswer, processedARR)
+			
+			// Add all non-A records (CNAME, AAAA, etc.)
+			for _, rr := range resp.Answer {
+				if _, ok := rr.(*dns.A); !ok {
+					newAnswer = append(newAnswer, rr)
+				}
+			}
+			
+			resp.Answer = newAnswer
+			
+			if os.Getenv("DEBUG") != "" {
+				log.Printf("HANDLE_ALL_IPS disabled: DNS response modified to return only first A record for %s", requestedDomain)
 			}
 		}
 
