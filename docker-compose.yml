@@ -51,7 +51,7 @@ services:
       # IPv6 support: "DNS_BIND_IP=::1" "WEBUI_BIND_IP=2001:db8::1"
       - "INVOKE_ALWAYS=1"
       - "SYNC_SCRIPT_EXECUTION=1" # Execute scripts synchronously for reliable connectivity
-      #- "HANDLE_ALL_IPS=1"
+      - "HANDLE_ALL_IPS=0"
       - "ENABLE_AAAA_PROCESSING=false"
       #- "DAEMON=true"  # Run as daemon process (useful for non-Docker deployments, enables background mode)
       #- "PID_FILE=/var/run/dfirewall.pid"  # PID file location for daemon mode (requires writable directory)
