@@ -1004,9 +1004,18 @@ func Register(rt Route) error {
 			// Add the first processed A record
 			newAnswer = append(newAnswer, processedARR)
 			
-			// Add all non-A records (CNAME, AAAA, etc.)
+			// Add all non-A records (CNAME, AAAA, etc.), but filter AAAA if IPv6 processing is disabled
 			for _, rr := range resp.Answer {
 				if _, ok := rr.(*dns.A); !ok {
+					// Filter out AAAA records if IPv6 processing is disabled
+					if aaaa, isAAAA := rr.(*dns.AAAA); isAAAA {
+						if enableAAAA == "false" || enableAAAA == "0" {
+							if os.Getenv("DEBUG") != "" {
+								log.Printf("Filtering out AAAA record %s for %s (IPv6 processing disabled)", aaaa.AAAA.String(), requestedDomain)
+							}
+							continue // Skip this AAAA record
+						}
+					}
 					newAnswer = append(newAnswer, rr)
 				}
 			}
@@ -1015,6 +1024,28 @@ func Register(rt Route) error {
 			
 			if os.Getenv("DEBUG") != "" {
 				log.Printf("HANDLE_ALL_IPS disabled: DNS response modified to return only first A record for %s", requestedDomain)
+			}
+		}
+		
+		// Filter out AAAA records from response if IPv6 processing is disabled (applies to both HANDLE_ALL_IPS modes)
+		if enableAAAA == "false" || enableAAAA == "0" {
+			filteredAnswer := []dns.RR{}
+			removedAAAACount := 0
+			
+			for _, rr := range resp.Answer {
+				if aaaa, isAAAA := rr.(*dns.AAAA); isAAAA {
+					removedAAAACount++
+					if os.Getenv("DEBUG") != "" {
+						log.Printf("Filtering out AAAA record %s for %s (IPv6 processing disabled)", aaaa.AAAA.String(), requestedDomain)
+					}
+					continue // Skip this AAAA record
+				}
+				filteredAnswer = append(filteredAnswer, rr)
+			}
+			
+			if removedAAAACount > 0 {
+				resp.Answer = filteredAnswer
+				log.Printf("Removed %d AAAA records from DNS response for %s (IPv6 processing disabled)", removedAAAACount, requestedDomain)
 			}
 		}
 
