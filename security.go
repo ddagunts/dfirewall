@@ -1366,7 +1366,12 @@ func initializeReputationSystem() {
 	for _, checker := range reputationConfig.Checkers {
 		if checker.Enabled {
 			// ASSUMPTION: Rate limit as requests per minute, convert to interval between requests
-			interval := time.Duration(60/checker.RateLimit) * time.Second
+			// Calculate interval in microseconds to avoid truncation for high rate limits
+			intervalMicros := (60 * 1000000) / checker.RateLimit // 60 seconds * 1000000 microseconds
+			if intervalMicros < 1 {
+				intervalMicros = 1 // Ensure at least 1 microsecond interval
+			}
+			interval := time.Duration(intervalMicros) * time.Microsecond
 			rateLimiters[checker.Name] = time.NewTicker(interval)
 		}
 	}
