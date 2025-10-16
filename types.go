@@ -305,9 +305,7 @@ type BlacklistConfig struct {
 type ReputationChecker struct {
 	Name        string            `json:"name"`         // Friendly name
 	Type        string            `json:"type"`         // ip, domain, or both
-	URL         string            `json:"url"`          // API endpoint URL template
-	BaseURL     string            `json:"base_url"`     // Base API URL
-	QueryFormat string            `json:"query_format"` // URL query format
+	URL         string            `json:"url"`          // API endpoint URL (base URL for provider-specific APIs)
 	APIKey      string            `json:"api_key"`      // API key for service
 	Headers     map[string]string `json:"headers"`      // Additional headers
 	Timeout     int               `json:"timeout"`      // Request timeout in seconds
@@ -316,7 +314,7 @@ type ReputationChecker struct {
 	Threshold   float64           `json:"threshold"`    // Threat threshold
 	Provider    string            `json:"provider"`     // Provider name (virustotal, abuseipdb, etc.)
 	Enabled     bool              `json:"enabled"`      // Enable/disable this checker
-	
+
 	// Response parsing
 	ResponseFormat  string `json:"response_format"`  // json, xml, text
 	ThreatField     string `json:"threat_field"`     // JSON field indicating threat status

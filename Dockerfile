@@ -1,4 +1,4 @@
-from golang:1.24 as build
+from golang:1.25 as build
 
 workdir /app
 
@@ -19,7 +19,7 @@ from debian:bookworm
 workdir /
 
 run apt -y update && apt -y upgrade && \
-apt -y --no-install-recommends install ipset iptables redis
+apt -y --no-install-recommends install ipset iptables redis ca-certificates
 
 copy --from=build /dfirewall /dfirewall
 

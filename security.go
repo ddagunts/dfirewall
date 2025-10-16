@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -120,23 +122,23 @@ func loadReputationConfiguration(configPath string) (*ReputationConfig, error) {
 			checker.Enabled = false
 		}
 		
-		// Set provider-specific defaults
+		// Set provider-specific URL defaults
 		switch checker.Provider {
 		case "virustotal":
-			if checker.BaseURL == "" {
-				checker.BaseURL = "https://www.virustotal.com/vtapi/v2"
+			if checker.URL == "" {
+				checker.URL = "https://www.virustotal.com/vtapi/v2"
 			}
 		case "abuseipdb":
-			if checker.BaseURL == "" {
-				checker.BaseURL = "https://api.abuseipdb.com/api/v2"
+			if checker.URL == "" {
+				checker.URL = "https://api.abuseipdb.com/api/v2"
 			}
 		case "urlvoid":
-			if checker.BaseURL == "" {
-				checker.BaseURL = "http://api.urlvoid.com/api1000"
+			if checker.URL == "" {
+				checker.URL = "http://api.urlvoid.com/api1000"
 			}
 		case "custom":
-			if checker.BaseURL == "" || checker.QueryFormat == "" {
-				return nil, fmt.Errorf("checker %s: custom provider requires base_url and query_format", checker.Name)
+			if checker.URL == "" {
+				return nil, fmt.Errorf("checker %s: custom provider requires url field", checker.Name)
 			}
 		}
 	}
@@ -1351,8 +1353,53 @@ func initializeReputationSystem() {
 		}
 	}
 	
+	// Create TLS configuration with system CA certificates
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	// Load system CA certificates for Docker containers
+	caCertPool := x509.NewCertPool()
+
+	// Try to load system certificates from common locations
+	certPaths := []string{
+		"/etc/ssl/certs/ca-certificates.crt",  // Debian/Ubuntu
+		"/etc/pki/tls/certs/ca-bundle.crt",    // CentOS/RHEL
+		"/etc/ssl/ca-bundle.pem",              // SUSE
+		"/etc/ssl/cert.pem",                   // Alpine
+		"/usr/local/share/certs/ca-root-nss.crt", // FreeBSD
+	}
+
+	for _, certPath := range certPaths {
+		if caCert, err := ioutil.ReadFile(certPath); err == nil {
+			if caCertPool.AppendCertsFromPEM(caCert) {
+				log.Printf("Loaded CA certificates from %s for reputation provider connections", certPath)
+				break
+			}
+		}
+	}
+
+	// Use system cert pool if available, fallback to our loaded certs
+	if systemPool, err := x509.SystemCertPool(); err == nil {
+		tlsConfig.RootCAs = systemPool
+	} else {
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	// Create HTTP client with proper TLS configuration
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+		// Connection pooling and timeout settings
+		MaxIdleConns:        100,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// Disable HTTP/2 for better compatibility with some reputation providers
+		TLSNextProto: make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+	}
+
 	httpClient = &http.Client{
-		Timeout: time.Duration(maxTimeout+5) * time.Second,
+		Timeout:   time.Duration(maxTimeout+5) * time.Second,
+		Transport: transport,
 	}
 	
 	// Initialize in-memory cache
